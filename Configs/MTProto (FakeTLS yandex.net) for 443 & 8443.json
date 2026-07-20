@@ -1,0 +1,14 @@
+{
+  "listen": "",
+  "port": 443,
+  "protocol": "mtproto",
+  "tag": "in-443-tcp",
+  "settings": {
+    "fakeTlsDomain": "yandex.net",
+    "clients": [ ],
+    "domainFronting": { },
+    "proxyProtocolListener": true,
+    "preferIp": "prefer-ipv4",
+    "routeThroughXray": false
+  }
+}
