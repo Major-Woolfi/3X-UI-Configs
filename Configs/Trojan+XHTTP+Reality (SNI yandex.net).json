@@ -1,0 +1,147 @@
+{
+  "listen": "",
+  "port": 8443,
+  "protocol": "trojan",
+  "tag": "in-8443-tcp",
+  "settings": {
+    "clients": [ ]
+  },
+  "sniffing": {
+    "enabled": true,
+    "destOverride": [
+      "http",
+      "tls",
+      "quic",
+      "fakedns"
+    ]
+  },
+  "streamSettings": {
+    "network": "xhttp",
+    "xhttpSettings": {
+      "path": "",
+      "host": "yandex.net",
+      "mode": "auto",
+      "xPaddingBytes": "100-1000",
+      "xPaddingObfsMode": true,
+      "xPaddingKey": "32HEX (use random generator)",
+      "xPaddingHeader": "Cookie",
+      "xPaddingPlacement": "cookie",
+      "xPaddingMethod": "tokenish",
+      "sessionIDPlacement": "cookie",
+      "sessionIDKey": "32HEX (use random generator)",
+      "sessionIDTable": "Base62",
+      "sessionIDLength": "16-32",
+      "seqPlacement": "cookie",
+      "seqKey": "16HEX (use random generator)",
+      "uplinkDataPlacement": "",
+      "uplinkDataKey": "",
+      "scMaxEachPostBytes": "1000000",
+      "noSSEHeader": false,
+      "scMaxBufferedPosts": 30,
+      "scStreamUpServerSecs": "20-80",
+      "serverMaxHeaderBytes": 0,
+      "uplinkHTTPMethod": "POST",
+      "headers": { },
+      "scMinPostsIntervalMs": "",
+      "uplinkChunkSize": 0,
+      "noGRPCHeader": false,
+      "xmux": {
+        "maxConcurrency": "16-32",
+        "maxConnections": "16",
+        "cMaxReuseTimes": 0,
+        "hMaxRequestTimes": "600-900",
+        "hMaxReusableSecs": "1800-3000",
+        "hKeepAlivePeriod": 0
+      },
+      "enableXmux": true
+    },
+    "security": "reality",
+    "realitySettings": {
+      "show": false,
+      "xver": 0,
+      "target": "yandex.net:443",
+      "serverNames": [
+        "xn--d1acpjx3f.xn--p1ai",
+        "yandex.aero",
+        "yandex.jobs",
+        "yandex.net",
+        "yandex.org",
+        "yandex.de",
+        "ya.ru",
+        "yandex.it",
+        "yandex.uz",
+        "yandex.tm",
+        "yandex.tj",
+        "yandex.ru",
+        "yandex.md",
+        "yandex.lv",
+        "yandex.lt",
+        "yandex.kz",
+        "yandex.fr",
+        "yandex.ee",
+        "yandex.com.tr",
+        "yandex.com.ge",
+        "yandex.com.am",
+        "yandex.com",
+        "yandex.co.il",
+        "yandex.by",
+        "yandex.az",
+        "yandex.tr"
+      ],
+      "privateKey": "REGENERATE PLS",
+      "minClientVer": "",
+      "maxClientVer": "",
+      "maxTimediff": 0,
+      "shortIds": [
+        "REGENERATE PLS"
+      ],
+      "mldsa65Seed": "",
+      "settings": {
+        "publicKey": "REGENERATE PLS",
+        "fingerprint": "randomized",
+        "serverName": "",
+        "spiderX": "",
+        "mldsa65Verify": ""
+      }
+    },
+    "externalProxy": [ ],
+    "finalmask": {
+      "quicParams": {
+        "congestion": "bbr",
+        "debug": false,
+        "maxIdleTimeout": 30,
+        "keepAlivePeriod": 10,
+        "disablePathMTUDiscovery": true,
+        "maxIncomingStreams": 1024,
+        "initStreamReceiveWindow": 8388608,
+        "maxStreamReceiveWindow": 8388608,
+        "initConnectionReceiveWindow": 20971520,
+        "maxConnectionReceiveWindow": 20971520,
+        "bbrProfile": "aggressive",
+        "udpHop": {
+          "ports": "20000-50000",
+          "interval": "5-10"
+        }
+      }
+    },
+    "sockopt": {
+      "tcpFastOpen": true,
+      "tproxy": "tproxy",
+      "tcpMptcp": true,
+      "penetrate": true,
+      "domainStrategy": "UseIP",
+      "tcpMaxSeg": 1500,
+      "tcpKeepAliveInterval": 60,
+      "tcpKeepAliveIdle": 60,
+      "tcpUserTimeout": 10000,
+      "tcpcongestion": "bbr",
+      "trustedXForwardedFor": [
+        "CF-Connecting-IP",
+        "X-Real-IP",
+        "True-Client-IP",
+        "X-Client-IP"
+      ],
+      "addressPortStrategy": "SrvPortAndAddress"
+    }
+  }
+}

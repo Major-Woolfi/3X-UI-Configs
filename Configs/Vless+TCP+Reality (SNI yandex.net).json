@@ -1,0 +1,108 @@
+{
+  "listen": "",
+  "port": 8443,
+  "protocol": "vless",
+  "tag": "in-8443-tcp",
+  "settings": {
+    "clients": [ ],
+    "decryption": "ML-KEM-768 (random)",
+    "encryption": "ML-KEM-768 (random)",
+    "testseed": [
+      900,
+      500,
+      900,
+      256
+    ]
+  },
+  "sniffing": {
+    "enabled": true,
+    "destOverride": [
+      "http",
+      "tls",
+      "quic",
+      "fakedns"
+    ]
+  },
+  "streamSettings": {
+    "network": "tcp",
+    "tcpSettings": {
+      "acceptProxyProtocol": false,
+      "header": {
+        "type": "http",
+        "request": {
+          "version": "1.3",
+          "method": "GET",
+          "path": [
+            "/"
+          ],
+          "headers": { }
+        },
+        "response": {
+          "version": "1.3",
+          "status": "200",
+          "reason": "OK",
+          "headers": { }
+        }
+      }
+    },
+    "security": "reality",
+    "realitySettings": {
+      "show": false,
+      "xver": 0,
+      "target": "yandex.net:443",
+      "serverNames": [
+        "xn--d1acpjx3f.xn--p1ai",
+        "yandex.aero",
+        "yandex.jobs",
+        "yandex.net",
+        "yandex.org",
+        "yandex.de",
+        "ya.ru",
+        "yandex.it",
+        "yandex.uz",
+        "yandex.tm",
+        "yandex.tj",
+        "yandex.ru",
+        "yandex.md",
+        "yandex.lv",
+        "yandex.lt",
+        "yandex.kz",
+        "yandex.fr",
+        "yandex.ee",
+        "yandex.com.tr",
+        "yandex.com.ge",
+        "yandex.com.am",
+        "yandex.com",
+        "yandex.co.il",
+        "yandex.by",
+        "yandex.az",
+        "yandex.tr"
+      ],
+      "privateKey": "REGENERATE PLS",
+      "minClientVer": "",
+      "maxClientVer": "",
+      "maxTimediff": 0,
+      "shortIds": [
+        "REGENERATE PLS"
+      ],
+      "mldsa65Seed": "",
+      "settings": {
+        "publicKey": "REGENERATE PLS",
+        "fingerprint": "randomized",
+        "serverName": "",
+        "spiderX": "REGENERATE PLS",
+        "mldsa65Verify": ""
+      }
+    },
+    "sockopt": {
+      "tcpFastOpen": true,
+      "tproxy": "tproxy",
+      "penetrate": true,
+      "tcpMaxSeg": 1500,
+      "tcpKeepAliveInterval": 60,
+      "tcpKeepAliveIdle": 60,
+      "tcpUserTimeout": 10000,
+      "tcpcongestion": "bbr"
+    }
+  }
+}
