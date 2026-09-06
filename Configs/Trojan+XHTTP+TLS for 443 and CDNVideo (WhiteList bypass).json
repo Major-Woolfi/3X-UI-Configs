@@ -1,12 +1,10 @@
 {
   "listen": "",
-  "port": 8443,
-  "protocol": "vless",
-  "tag": "in-8443-tcp",
+  "port": 443,
+  "protocol": "trojan",
+  "tag": "in-443-tcp",
   "settings": {
-    "clients": [ ],
-    "decryption": "ML-KEM-768 (random)",
-    "encryption": "ML-KEM-768 (random)"
+    "clients": [ ]
   },
   "sniffing": {
     "enabled": true,
@@ -21,7 +19,7 @@
     "network": "xhttp",
     "xhttpSettings": {
       "path": "",
-      "host": "yandex.net",
+      "host": "YOURDOMAIN.CLIENT.INHERE",
       "mode": "auto",
       "xPaddingBytes": "100-1000",
       "xPaddingObfsMode": true,
@@ -33,7 +31,7 @@
       "sessionIDKey": "32HEX (use random generator)",
       "sessionIDTable": "Base62",
       "sessionIDLength": "16-32",
-      "seqPlacement": "cookie",
+      "seqPlacement": "query",
       "seqKey": "16HEX (use random generator)",
       "uplinkDataPlacement": "",
       "uplinkDataKey": "",
@@ -42,7 +40,7 @@
       "scMaxBufferedPosts": 30,
       "scStreamUpServerSecs": "20-80",
       "serverMaxHeaderBytes": 0,
-      "uplinkHTTPMethod": "POST",
+      "uplinkHTTPMethod": "PUT",
       "headers": {
         "Cache-Control": "no-cache",
         "Pragma": "no-cache",
@@ -61,53 +59,43 @@
       },
       "enableXmux": true
     },
-    "security": "reality",
-    "realitySettings": {
-      "show": false,
-      "xver": 0,
-      "target": "yandex.net:443",
-      "serverNames": [
-        "xn--d1acpjx3f.xn--p1ai",
-        "yandex.aero",
-        "yandex.jobs",
-        "yandex.net",
-        "yandex.org",
-        "yandex.de",
-        "ya.ru",
-        "yandex.it",
-        "yandex.uz",
-        "yandex.tm",
-        "yandex.tj",
-        "yandex.ru",
-        "yandex.md",
-        "yandex.lv",
-        "yandex.lt",
-        "yandex.kz",
-        "yandex.fr",
-        "yandex.ee",
-        "yandex.com.tr",
-        "yandex.com.ge",
-        "yandex.com.am",
-        "yandex.com",
-        "yandex.co.il",
-        "yandex.by",
-        "yandex.az",
-        "yandex.tr"
+    "security": "tls",
+    "tlsSettings": {
+      "serverName": "YOURDOMAIN.CLIENT.INHERE",
+      "minVersion": "1.1",
+      "maxVersion": "1.3",
+      "cipherSuites": "",
+      "rejectUnknownSni": false,
+      "disableSystemRoot": false,
+      "enableSessionResumption": true,
+      "certificates": [
+        {
+          "certificateFile": "/root/cert/YOURDOMAIN.SERVER.INHERE/fullchain.pem",
+          "keyFile": "/root/cert/YOURDOMAIN.SERVER.INHERE/privkey.pem",
+          "ocspStapling": 0,
+          "oneTimeLoading": true,
+          "usage": "encipherment",
+          "buildChain": false,
+          "useFile": true
+        }
       ],
-      "privateKey": "REGENERATE PLS",
-      "minClientVer": "",
-      "maxClientVer": "",
-      "maxTimediff": 0,
-      "shortIds": [
-        "REGENERATE PLS"
+      "alpn": [
+        "h3",
+        "h2"
       ],
-      "mldsa65Seed": "",
+      "echServerKeys": "",
+      "curvePreferences": [
+        "X25519MLKEM768",
+        "X25519",
+        "P-256",
+        "P-384",
+        "P-521"
+      ],
       "settings": {
-        "publicKey": "REGENERATE PLS",
         "fingerprint": "randomized",
-        "serverName": "",
-        "spiderX": "",
-        "mldsa65Verify": ""
+        "echConfigList": "",
+        "pinnedPeerCertSha256": [ ],
+        "verifyPeerCertByName": ""
       }
     },
     "externalProxy": [ ],
@@ -133,9 +121,7 @@
     "sockopt": {
       "tcpFastOpen": true,
       "tproxy": "tproxy",
-      "tcpMptcp": true,
       "penetrate": true,
-      "domainStrategy": "UseIP",
       "tcpMaxSeg": 1500,
       "tcpKeepAliveInterval": 60,
       "tcpKeepAliveIdle": 60,
@@ -146,8 +132,7 @@
         "X-Real-IP",
         "True-Client-IP",
         "X-Client-IP"
-      ],
-      "addressPortStrategy": "SrvPortAndAddress"
+      ]
     }
   }
 }

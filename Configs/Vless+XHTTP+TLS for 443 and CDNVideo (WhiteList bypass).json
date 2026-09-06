@@ -43,13 +43,17 @@
       "scStreamUpServerSecs": "20-80",
       "serverMaxHeaderBytes": 0,
       "uplinkHTTPMethod": "PUT",
-      "headers": { },
+      "headers": {
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      },
       "scMinPostsIntervalMs": "",
       "uplinkChunkSize": 0,
       "noGRPCHeader": false,
       "xmux": {
-        "maxConcurrency": "16-32",
-        "maxConnections": "16",
+        "maxConcurrency": "32",
+        "maxConnections": "64",
         "cMaxReuseTimes": 0,
         "hMaxRequestTimes": "600-900",
         "hMaxReusableSecs": "1800-3000",
