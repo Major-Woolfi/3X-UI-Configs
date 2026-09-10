@@ -44,9 +44,11 @@
       "serverMaxHeaderBytes": 0,
       "uplinkHTTPMethod": "PUT",
       "headers": {
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "Accept": "*/*",
+        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache"
       },
       "scMinPostsIntervalMs": "",
       "uplinkChunkSize": 0,
@@ -83,7 +85,8 @@
       ],
       "alpn": [
         "h3",
-        "h2"
+        "h2",
+        "http/1.1"
       ],
       "echServerKeys": "",
       "curvePreferences": [
@@ -124,7 +127,7 @@
       "tcpFastOpen": true,
       "tproxy": "tproxy",
       "penetrate": true,
-      "tcpMaxSeg": 1500,
+      "tcpMaxSeg": 1460,
       "tcpKeepAliveInterval": 60,
       "tcpKeepAliveIdle": 60,
       "tcpUserTimeout": 10000,

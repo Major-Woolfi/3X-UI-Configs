@@ -43,11 +43,7 @@
       "scStreamUpServerSecs": "20-80",
       "serverMaxHeaderBytes": 0,
       "uplinkHTTPMethod": "POST",
-      "headers": {
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-      },
+      "headers": { },
       "scMinPostsIntervalMs": "",
       "uplinkChunkSize": 0,
       "noGRPCHeader": false,
@@ -136,17 +132,12 @@
       "tcpMptcp": true,
       "penetrate": true,
       "domainStrategy": "UseIP",
-      "tcpMaxSeg": 1500,
+      "tcpMaxSeg": 1460,
       "tcpKeepAliveInterval": 60,
       "tcpKeepAliveIdle": 60,
       "tcpUserTimeout": 10000,
       "tcpcongestion": "bbr",
-      "trustedXForwardedFor": [
-        "CF-Connecting-IP",
-        "X-Real-IP",
-        "True-Client-IP",
-        "X-Client-IP"
-      ],
+      "trustedXForwardedFor": [ ],
       "addressPortStrategy": "SrvPortAndAddress"
     }
   }
