@@ -1,12 +1,14 @@
 {
   "listen": "",
   "port": 8443,
-  "protocol": "vless",
+  "protocol": "shadowsocks",
   "tag": "in-8443-tcpudp",
   "settings": {
     "clients": [ ],
-    "decryption": "ML-KEM-768 (random)",
-    "encryption": "ML-KEM-768 (random)"
+    "method": "chacha20-ietf-poly1305",
+    "password": "REGENERATE PLS",
+    "network": "tcp,udp",
+    "ivCheck": false
   },
   "sniffing": {
     "enabled": true,
@@ -22,7 +24,7 @@
     "xhttpSettings": {
       "path": "",
       "host": "yandex.net",
-      "mode": "auto",
+      "mode": "packet-up",
       "xPaddingBytes": "100-1000",
       "xPaddingObfsMode": true,
       "xPaddingKey": "32HEX (use random generator)",
@@ -35,14 +37,14 @@
       "sessionIDLength": "16-32",
       "seqPlacement": "query",
       "seqKey": "16HEX (use random generator)",
-      "uplinkDataPlacement": "",
-      "uplinkDataKey": "",
+      "uplinkDataPlacement": "auto",
+      "uplinkDataKey": "v",
       "scMaxEachPostBytes": "1000000",
       "noSSEHeader": false,
       "scMaxBufferedPosts": 30,
       "scStreamUpServerSecs": "20-80",
       "serverMaxHeaderBytes": 0,
-      "uplinkHTTPMethod": "PUT",
+      "uplinkHTTPMethod": "GET",
       "headers": { },
       "scMinPostsIntervalMs": "",
       "uplinkChunkSize": 0,

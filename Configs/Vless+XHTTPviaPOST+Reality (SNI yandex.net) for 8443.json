@@ -2,7 +2,7 @@
   "listen": "",
   "port": 8443,
   "protocol": "vless",
-  "tag": "in-8443-tcp",
+  "tag": "in-8443-tcpudp",
   "settings": {
     "clients": [ ],
     "decryption": "ML-KEM-768 (random)",
@@ -129,16 +129,23 @@
     "sockopt": {
       "tcpFastOpen": true,
       "tproxy": "tproxy",
-      "tcpMptcp": true,
       "penetrate": true,
-      "domainStrategy": "UseIP",
       "tcpMaxSeg": 1460,
       "tcpKeepAliveInterval": 60,
       "tcpKeepAliveIdle": 60,
-      "tcpUserTimeout": 10000,
+      "tcpUserTimeout": 30000,
       "tcpcongestion": "bbr",
+      "acceptProxyProtocol": false,
+      "mark": 0,
+      "tcpMptcp": true,
+      "domainStrategy": "UseIP",
+      "dialerProxy": "",
+      "V6Only": false,
+      "tcpWindowClamp": 0,
+      "interface": "",
       "trustedXForwardedFor": [ ],
-      "addressPortStrategy": "SrvPortAndAddress"
+      "addressPortStrategy": "SrvPortAndAddress",
+      "customSockopt": [ ]
     }
   }
 }

@@ -1,12 +1,14 @@
 {
   "listen": "",
   "port": 8443,
-  "protocol": "vless",
+  "protocol": "shadowsocks",
   "tag": "in-8443-tcpudp",
   "settings": {
     "clients": [ ],
-    "decryption": "ML-KEM-768 (random)",
-    "encryption": "ML-KEM-768 (random)"
+    "method": "chacha20-ietf-poly1305",
+    "password": "REGENERATE PLS",
+    "network": "tcp,udp",
+    "ivCheck": false
   },
   "sniffing": {
     "enabled": true,

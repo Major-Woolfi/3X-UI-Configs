@@ -101,5 +101,14 @@
     "listen": "127.0.0.1:11111",
     "tag": "metrics_out"
   },
+  "fakedns": [
+    {
+      "ipPool": [
+        "198.18.0.0/15",
+        "fc00::/18"
+      ],
+      "poolStrategy": "random"
+    }
+  ],
   "stats": { }
 }
