@@ -14,4 +14,16 @@ if errorlevel 1 (
     exit /b 1
 )
 
-python Scripts\generate_config.py
+echo [INFO] Проверка зависимостей...
+python Scripts\install.py
+if errorlevel 1 (
+    echo [ОШИБКА] Не удалось установить зависимости.
+    pause
+    exit /b 1
+)
+
+python Scripts\generate_config.py --pause
+if errorlevel 1 (
+    echo [ОШИБКА] Генератор завершился с ошибкой.
+    pause
+)

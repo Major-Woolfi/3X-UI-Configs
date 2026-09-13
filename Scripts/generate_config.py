@@ -1,49 +1,52 @@
+import argparse
 import base64
 import json
 import logging
 import os
 import re
 import secrets
+import shutil
+import subprocess
 import sys
+import traceback
 import uuid
-from logging.handlers import TimedRotatingFileHandler
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, dict, list, tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+logger = logging.getLogger(__name__)
 
 # --- Константы ---
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT_DIR = SCRIPT_DIR.parent
 CONFIGS_DIR = ROOT_DIR / "Configs"
 BUILD_DIR = ROOT_DIR / "Build"
-LOG_DIR = ROOT_DIR / "logs"
 
 HEX_PLACEHOLDER_RE = re.compile(r"^\s*(\d+)\s*HEX", re.IGNORECASE)
+DOMAIN_PLACEHOLDERS = ("YOURDOMAIN.CLIENT.INHERE", "YOURDOMAIN.SERVER.INHERE")
 
-# --- Логирование ---
-os.makedirs(LOG_DIR, exist_ok=True)
-LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(message)s"
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+# 3x-ui хранит эти протоколы в структурах, которые генератор соберёт только
+# угадыванием (mtproto — ee-secret с доменом, wireguard/amneziawg — wg-ключи).
+SKIP_PROTOCOLS = {"mtproto", "wireguard", "amneziawg", "dokodemo-door", "http", "socks"}
 
-file_handler = TimedRotatingFileHandler(
-    os.path.join(LOG_DIR, f"{__name__}.log"),
-    when="midnight",
-    encoding="utf-8",
-)
-file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
-file_handler.setLevel(logging.DEBUG)
-logger.addHandler(file_handler)
+# VLESS Encryption: mlkem768x25519plus.<вид трафика>.<ticket|rtt>.<ключ аутентификации>
+# Ключ аутентификации — 32 байта x25519: PrivateKey у сервера, PublicKey у клиента.
+# Паддинг намеренно опущен: core сам подставляет 100-111-1111.75-0-111.50-0-3333.
+VLESS_ENC_METHOD = "mlkem768x25519plus"
+VLESS_ENC_APPEARANCE = "random"
+VLESS_ENC_INBOUND_TTL = "600s"
+VLESS_ENC_OUTBOUND_RTT = "0rtt"
 
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(logging.Formatter(LOG_FORMAT))
-console_handler.setLevel(logging.INFO)
-logger.addHandler(console_handler)
+
+def warn(text: str) -> None:
+    print(f"[ВНИМАНИЕ] {text}", file=sys.stderr)
+
 
 # --- Настройка консоли для Windows ---
 if sys.platform == "win32":
-    for _s in ("stdout", "stderr", "stdin"):
+    for _stream_name in ("stdout", "stderr", "stdin"):
         try:
-            getattr(sys, _s).reconfigure(encoding="utf-8")
+            getattr(sys, _stream_name).reconfigure(encoding="utf-8")
         except Exception:  # noqa: BLE001, S110
             pass
 
@@ -55,18 +58,9 @@ try:
     HAS_CRYPTO = True
 except ImportError:
     HAS_CRYPTO = False
-    logger.warning("cryptography не установлена, используется чистая реализация X25519")
-
-try:
-    import oqs
-
-    HAS_OQS = True
-except ImportError:
-    HAS_OQS = False
-    logger.warning("liboqs-python не установлена, ML-KEM-768 будет использовать случайные байты")
 
 
-# --- X25519 (Reality: privateKey / publicKey) ---
+# --- X25519 (Reality и ключ аутентификации VLESS Encryption) ---
 def _x25519_pure(k: bytes, u: bytes) -> bytes:
     p = 2**255 - 19
     k = bytearray(k)
@@ -76,7 +70,7 @@ def _x25519_pure(k: bytes, u: bytes) -> bytes:
     k_int = int.from_bytes(k, "little")
     u_int = int.from_bytes(u, "little") % p
 
-    def cswap(swap: int, x: int, y: int) -> tuple[int, int]:
+    def cswap(swap: int, x: int, y: int) -> Tuple[int, int]:
         dummy = (swap * (x - y)) % p
         return (x - dummy) % p, (y + dummy) % p
 
@@ -89,38 +83,39 @@ def _x25519_pure(k: bytes, u: bytes) -> bytes:
         x_2, x_3 = cswap(swap, x_2, x_3)
         z_2, z_3 = cswap(swap, z_2, z_3)
         swap = bit
-        A = (x_2 + z_2) % p
-        AA = A * A % p
-        B = (x_2 - z_2) % p
-        BB = B * B % p
-        E = (AA - BB) % p
-        C = (x_3 + z_3) % p
-        D = (x_3 - z_3) % p
-        DA = D * A % p
-        CB = C * B % p
-        x_3 = pow((DA + CB) % p, 2, p)
-        z_3 = u_int * pow((DA - CB) % p, 2, p) % p
-        x_2 = AA * BB % p
-        z_2 = E * (AA + 121665 * E) % p
+        a = (x_2 + z_2) % p
+        aa = a * a % p
+        b = (x_2 - z_2) % p
+        bb = b * b % p
+        e = (aa - bb) % p
+        c = (x_3 + z_3) % p
+        d = (x_3 - z_3) % p
+        da = d * a % p
+        cb = c * b % p
+        x_3 = pow((da + cb) % p, 2, p)
+        z_3 = u_int * pow((da - cb) % p, 2, p) % p
+        x_2 = aa * bb % p
+        z_2 = e * (aa + 121665 * e) % p
     x_2, _ = cswap(swap, x_2, x_3)
     z_2, _ = cswap(swap, z_2, z_3)
     return (x_2 * pow(z_2, p - 2, p) % p).to_bytes(32, "little")
 
 
-def _b64url(b: bytes) -> str:
-    return base64.urlsafe_b64encode(b).decode().rstrip("=")
+def _b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
-def gen_reality_keypair() -> tuple[str, str]:
+def gen_x25519_keypair() -> Tuple[str, str]:
     if HAS_CRYPTO:
-        po = X25519PrivateKey.generate()
-        priv = po.private_bytes(
+        private_obj = X25519PrivateKey.generate()
+        priv = private_obj.private_bytes(
             serialization.Encoding.Raw,
             serialization.PrivateFormat.Raw,
             serialization.NoEncryption(),
         )
-        pub = po.public_key().public_bytes(
-            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        pub = private_obj.public_key().public_bytes(
+            serialization.Encoding.Raw,
+            serialization.PublicFormat.Raw,
         )
     else:
         priv = secrets.token_bytes(32)
@@ -128,45 +123,52 @@ def gen_reality_keypair() -> tuple[str, str]:
     return _b64url(priv), _b64url(pub)
 
 
-# --- ML-KEM-768 (гибридный KEM: ML-KEM-768 + X25519) ---
-def gen_mlkem768_keys() -> tuple[str, str]:
-    """
-    Генерирует ключи для mlkem768x25519plus.
+def gen_reality_keypair() -> Tuple[str, str]:
+    return gen_x25519_keypair()
 
-    Формат 3X-UI:
-    - decryption: mlkem768x25519plus.random.600s.<base64url(64 байта)>
-    - encryption: mlkem768x25519plus.random.0rtt.<base64url(1184 байта)>
 
-    64 байта = seed для ML-KEM-768 private key
-    1184 байта = ML-KEM-768 public key
-    """
-    if HAS_OQS:
-        # Настоящая генерация через liboqs
-        seed = secrets.token_bytes(64)
-        kem = oqs.KeyEncapsulation("ML-KEM-768")
-        public_key = kem.generate_keypair_seed(seed)
-        logger.debug(
-            f"ML-KEM-768 сгенерирован через liboqs (seed: {len(seed)} байт, pk: {len(public_key)} байт)"
+# --- VLESS Encryption (ML-KEM-768 + X25519) ---
+@lru_cache(maxsize=1)
+def _vlessenc_from_xray() -> Optional[Tuple[str, str]]:
+    binary = os.environ.get("XRAY_BIN") or shutil.which("xray")
+    if not binary:
+        return None
+    try:
+        result = subprocess.run(  # noqa: S603
+            [binary, "vlessenc"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
         )
-    else:
-        # Fallback: случайные байты нужной длины
-        seed = secrets.token_bytes(64)
-        public_key = secrets.token_bytes(1184)
-        logger.warning("ML-KEM-768 сгенерирован случайными байтами (liboqs не установлен)")
+    except (OSError, subprocess.SubprocessError) as e:
+        warn(f"xray vlessenc не запущен: {e}")
+        return None
+    if result.returncode != 0:
+        warn(f"xray vlessenc вернул код {result.returncode}")
+        return None
+    text = result.stdout + result.stderr
+    decryption = re.search(r'"decryption"\s*:\s*"([^"]+)"', text)
+    encryption = re.search(r'"encryption"\s*:\s*"([^"]+)"', text)
+    if not decryption or not encryption:
+        warn("xray vlessenc: не удалось разобрать вывод")
+        return None
+    return decryption.group(1), encryption.group(1)
 
-    decryption = f"mlkem768x25519plus.random.600s.{_b64url(seed)}"
-    encryption = f"mlkem768x25519plus.random.0rtt.{_b64url(public_key)}"
-    return decryption, encryption
+
+def gen_vless_enc_pair() -> Tuple[str, str, str]:
+    pair = _vlessenc_from_xray()
+    if pair:
+        return pair[0], pair[1], "xray vlessenc"
+    priv, pub = gen_x25519_keypair()
+    decryption = ".".join((VLESS_ENC_METHOD, VLESS_ENC_APPEARANCE, VLESS_ENC_INBOUND_TTL, priv))
+    encryption = ".".join((VLESS_ENC_METHOD, VLESS_ENC_APPEARANCE, VLESS_ENC_OUTBOUND_RTT, pub))
+    return decryption, encryption, "x25519 ключ аутентификации"
 
 
 # --- Генерация секретов ---
 def gen_short_id() -> str:
-    """6 байт = 12 hex символов"""
     return secrets.token_hex(6)
-
-
-def gen_hex(n_bytes: int) -> str:
-    return secrets.token_hex(n_bytes)
 
 
 def gen_uuid() -> str:
@@ -177,273 +179,673 @@ def gen_password() -> str:
     return secrets.token_urlsafe(16)
 
 
-def gen_ss_password() -> str:
-    return _b64url(secrets.token_bytes(32))
-
-
-def gen_mtproto_secret() -> str:
-    return "ee" + secrets.token_hex(16)
+def gen_ss_password(method: str) -> str:
+    # У 2022-blake3-* пароль — это base64 ключ фиксированной длины, а не строка.
+    if "2022-blake3" in method:
+        n_bytes = 16 if "128" in method else 32
+        return base64.b64encode(secrets.token_bytes(n_bytes)).decode()
+    return secrets.token_urlsafe(22)
 
 
 def gen_spider_x_path() -> str:
-    """/<15 hex символов>"""
     return "/" + secrets.token_hex(8)[:15]
 
 
-def gen_hex_from_placeholder(v: str) -> str | None:
-    m = HEX_PLACEHOLDER_RE.match(v.strip())
-    if not m:
+def gen_hex_from_placeholder(value: str) -> Optional[str]:
+    match = HEX_PLACEHOLDER_RE.match(value.strip())
+    if not match:
         return None
-    n = int(m.group(1))
-    return secrets.token_hex(max(1, n // 2))
+    n_hex = int(match.group(1))
+    return secrets.token_hex(max(1, n_hex // 2))
 
 
-# --- Определение типа / заполнение ---
-def is_whitelist_quick(cfg_path: Path) -> bool:
-    if "whitelist" in cfg_path.name.lower():
+# --- Схема панели 3x-ui v3.7.0: типы полей, которые реально парсятся при импорте ---
+STR = "str"
+INT = "int"
+BOOL = "bool"
+DICT = "dict"
+OPEN = "open"
+
+XHTTP_SPEC: Dict[str, Any] = {
+    "path": STR,
+    "host": STR,
+    "mode": "enum:auto|packet-up|stream-up|stream-one",
+    "xPaddingBytes": STR,
+    "xPaddingObfsMode": BOOL,
+    "xPaddingKey": STR,
+    "xPaddingHeader": STR,
+    "xPaddingPlacement": STR,
+    "xPaddingMethod": STR,
+    "sessionIDPlacement": STR,
+    "sessionIDKey": STR,
+    "sessionIDTable": STR,
+    "sessionIDLength": STR,
+    "seqPlacement": STR,
+    "seqKey": STR,
+    "uplinkDataPlacement": STR,
+    "uplinkDataKey": STR,
+    "scMaxEachPostBytes": STR,
+    "noSSEHeader": BOOL,
+    "scMaxBufferedPosts": INT,
+    "scStreamUpServerSecs": STR,
+    "serverMaxHeaderBytes": INT,
+    "uplinkHTTPMethod": STR,
+    "headers": DICT,
+    "scMinPostsIntervalMs": STR,
+    "uplinkChunkSize": INT,
+    "noGRPCHeader": BOOL,
+    "xmux": {
+        "maxConcurrency": STR,
+        "maxConnections": "str|int",
+        "cMaxReuseTimes": "str|int",
+        "hMaxRequestTimes": STR,
+        "hMaxReusableSecs": STR,
+        "hKeepAlivePeriod": INT,
+    },
+    "enableXmux": BOOL,
+}
+
+TLS_SPEC: Dict[str, Any] = {
+    "serverName": STR,
+    "minVersion": "enum:1.0|1.1|1.2|1.3",
+    "maxVersion": "enum:1.0|1.1|1.2|1.3",
+    "cipherSuites": STR,
+    "rejectUnknownSni": BOOL,
+    "disableSystemRoot": BOOL,
+    "enableSessionResumption": BOOL,
+    "certificates": "list<dict>",
+    "alpn": "list<str>",
+    "echServerKeys": STR,
+    "curvePreferences": "list<str>",
+    "masterKeyLog": "opt:str",
+    "settings": {
+        "fingerprint": STR,
+        "echConfigList": STR,
+        "pinnedPeerCertSha256": "list<str>",
+        "verifyPeerCertByName": STR,
+    },
+}
+
+REALITY_SPEC: Dict[str, Any] = {
+    "show": BOOL,
+    "xver": INT,
+    "target": STR,
+    "serverNames": "list<str>",
+    "privateKey": STR,
+    "minClientVer": STR,
+    "maxClientVer": STR,
+    "maxTimediff": INT,
+    "shortIds": "list<str>",
+    "mldsa65Seed": STR,
+    "masterKeyLog": "opt:str",
+    "limitFallbackUpload": "opt:dict",
+    "limitFallbackDownload": "opt:dict",
+    "settings": {
+        "publicKey": STR,
+        "fingerprint": STR,
+        "serverName": STR,
+        "spiderX": STR,
+        "mldsa65Verify": STR,
+    },
+}
+
+SOCKOPT_SPEC: Dict[str, Any] = {
+    "acceptProxyProtocol": BOOL,
+    "tcpFastOpen": "bool|int",
+    "mark": INT,
+    "tproxy": "enum:off|redirect|tproxy",
+    "tcpMptcp": BOOL,
+    "penetrate": BOOL,
+    "domainStrategy": STR,
+    "tcpMaxSeg": INT,
+    "dialerProxy": STR,
+    "tcpKeepAliveInterval": INT,
+    "tcpKeepAliveIdle": INT,
+    "tcpUserTimeout": INT,
+    "tcpcongestion": "enum:bbr|cubic|reno",
+    "V6Only": BOOL,
+    "tcpWindowClamp": INT,
+    "interface": STR,
+    "trustedXForwardedFor": "list<str>",
+    "addressPortStrategy": STR,
+    "happyEyeballs": "opt:dict",
+    "customSockopt": "list<dict>",
+}
+
+STREAM_SPEC: Dict[str, Any] = {
+    "network": "enum:tcp|kcp|ws|grpc|httpupgrade|xhttp|hysteria",
+    "security": "enum:none|tls|reality|hysteria",
+    "xhttpSettings": XHTTP_SPEC,
+    "tlsSettings": TLS_SPEC,
+    "realitySettings": REALITY_SPEC,
+    "sockopt": SOCKOPT_SPEC,
+    "externalProxy": "list<dict>",
+    "finalmask": OPEN,
+    "tcpSettings": OPEN,
+    "kcpSettings": OPEN,
+    "wsSettings": OPEN,
+    "grpcSettings": OPEN,
+    "httpupgradeSettings": OPEN,
+    "hysteriaSettings": OPEN,
+}
+
+SNIFFING_SPEC: Dict[str, Any] = {
+    "enabled": BOOL,
+    "destOverride": "list<str>",
+    "metadataOnly": BOOL,
+    "routeOnly": BOOL,
+    "domains": "opt:list<str>",
+}
+
+VLESS_SETTINGS_SPEC: Dict[str, Any] = {
+    "clients": "list<dict>",
+    "decryption": STR,
+    "encryption": STR,
+    "fallbacks": "list<dict>",
+    "testseed": "opt:list<int>",
+}
+
+SHADOWSOCKS_SETTINGS_SPEC: Dict[str, Any] = {
+    "method": STR,
+    "password": STR,
+    "network": "enum:tcp|udp|tcp,udp",
+    "clients": "list<dict>",
+    "ivCheck": BOOL,
+}
+
+PROTOCOL_SETTINGS_SPEC: Dict[str, Dict[str, Any]] = {
+    "vless": VLESS_SETTINGS_SPEC,
+    "shadowsocks": SHADOWSOCKS_SETTINGS_SPEC,
+}
+
+INBOUND_SPEC: Dict[str, Any] = {
+    "listen": STR,
+    "port": INT,
+    "protocol": STR,
+    "tag": STR,
+    "settings": OPEN,
+    "sniffing": SNIFFING_SPEC,
+    "streamSettings": STREAM_SPEC,
+    "allocate": OPEN,
+}
+
+
+def _kind_of(spec: str) -> str:
+    body = spec[4:] if spec.startswith("opt:") else spec
+    return body.split(":", 1)[0] if body.startswith("enum:") else body
+
+
+def _check_value(value: Any, spec: Any, path: str, errors: List[str], warns: List[str]) -> None:
+    if spec in (OPEN, "any"):
+        return
+    if isinstance(spec, dict):
+        if not isinstance(value, dict):
+            errors.append(f"{path}: ожидался объект, лежит {value!r}")
+            return
+        _walk_spec(value, spec, path, errors, warns)
+        return
+
+    kind = _kind_of(spec)
+    if kind == "list<dict>":
+        if not isinstance(value, list) or any(not isinstance(x, dict) for x in value):
+            errors.append(f"{path}: ожидался список объектов, лежит {value!r}")
+        return
+    if kind == "list<str>":
+        if not isinstance(value, list) or any(not isinstance(x, str) for x in value):
+            errors.append(f"{path}: ожидался список строк, лежит {value!r}")
+        return
+    if kind == "list<int>":
+        if not isinstance(value, list) or any(not isinstance(x, int) for x in value):
+            errors.append(f"{path}: ожидался список чисел, лежит {value!r}")
+        return
+
+    if kind == "str" and not isinstance(value, str):
+        errors.append(f"{path}: панель ждёт строку, лежит {type(value).__name__} {value!r}")
+    elif kind == "int" and (not isinstance(value, int) or isinstance(value, bool)):
+        errors.append(f"{path}: панель ждёт число, лежит {type(value).__name__} {value!r}")
+    elif kind == "bool" and not isinstance(value, bool):
+        errors.append(f"{path}: панель ждёт true/false, лежит {value!r}")
+    elif kind == "dict" and not isinstance(value, dict):
+        errors.append(f"{path}: панель ждёт объект, лежит {value!r}")
+    elif kind == "list" and not isinstance(value, list):
+        errors.append(f"{path}: панель ждёт список, лежит {value!r}")
+    elif kind == "str|int" and not isinstance(value, (str, int)):
+        errors.append(f"{path}: панель ждёт строку или число, лежит {value!r}")
+    elif kind == "bool|int" and not isinstance(value, (bool, int)):
+        errors.append(f"{path}: панель ждёт true/false или число, лежит {value!r}")
+
+    if kind.startswith("enum:") and isinstance(value, str):
+        allowed = kind[5:].split("|")
+        if value not in allowed:
+            errors.append(f"{path}: значение {value!r} вне списка панели {allowed}")
+
+
+def _walk_spec(
+    obj: Dict[str, Any],
+    spec: Dict[str, Any],
+    prefix: str,
+    errors: List[str],
+    warns: List[str],
+) -> None:
+    for key, value in obj.items():
+        path = f"{prefix}.{key}" if prefix else key
+        if key not in spec:
+            warns.append(f"{path}: панель не знает такое поле и вырежет его при сохранении")
+            continue
+        _check_value(value, spec[key], path, errors, warns)
+
+
+def validate_inbound(config: Dict[str, Any]) -> Tuple[List[str], List[str]]:
+    errors: List[str] = []
+    warns: List[str] = []
+    _walk_spec(config, INBOUND_SPEC, "", errors, warns)
+
+    port = config.get("port")
+    if isinstance(port, int) and not 1 <= port <= 65535:
+        errors.append(f"port: {port} вне диапазона 1-65535")
+
+    settings = config.get("settings")
+    protocol = str(config.get("protocol", ""))
+    if isinstance(settings, dict):
+        spec = PROTOCOL_SETTINGS_SPEC.get(protocol)
+        if spec is not None:
+            _walk_spec(settings, spec, "settings", errors, warns)
+        clients = settings.get("clients")
+        if isinstance(clients, list):
+            for index, client in enumerate(clients):
+                if not isinstance(client, dict):
+                    continue
+                if protocol == "vless" and not str(client.get("id", "")):
+                    errors.append(f"settings.clients[{index}].id: пустой id")
+                if not str(client.get("email", "")):
+                    warns.append(f"settings.clients[{index}].email: панель требует непустой email")
+
+    stream = config.get("streamSettings")
+    if not isinstance(stream, dict):
+        return errors, warns
+
+    xhttp = stream.get("xhttpSettings")
+    if isinstance(xhttp, dict):
+        if (
+            xhttp.get("mode") in ("stream-up", "stream-one")
+            and xhttp.get("uplinkHTTPMethod") == "GET"
+        ):
+            warns.append("xhttpSettings: uplinkHTTPMethod=GET имеет смысл только с mode=packet-up")
+        xmux = xhttp.get("xmux")
+        if isinstance(xmux, dict):
+            concurrency = str(xmux.get("maxConcurrency", ""))
+            connections = str(xmux.get("maxConnections", ""))
+            if concurrency not in ("", "0") and connections not in ("", "0"):
+                warns.append(
+                    "xhttpSettings.xmux: maxConcurrency и maxConnections взаимоисключающие, "
+                    "xray-core отклонит конфиг — оставь заполненным только одно из них"
+                )
+
+    tls = stream.get("tlsSettings")
+    if isinstance(tls, dict):
+        low, high = tls.get("minVersion"), tls.get("maxVersion")
+        order = ["1.0", "1.1", "1.2", "1.3"]
+        if low in order and high in order and order.index(low) > order.index(high):
+            errors.append(f"tlsSettings: minVersion {low} выше maxVersion {high}")
+
+    sniffing = config.get("sniffing")
+    if isinstance(sniffing, dict) and "fakedns" in (sniffing.get("destOverride") or []):
+        warns.append(
+            "sniffing.destOverride содержит fakedns: без fakedns в настройках Xray "
+            "панель игнорирует эту строку"
+        )
+    return errors, warns
+
+
+# --- Плейсхолдеры ---
+def is_placeholder(value: str) -> bool:
+    stripped = value.strip()
+    if not stripped or stripped == "REGENERATE PLS" or "(random)" in stripped:
         return True
-    try:
-        txt = cfg_path.read_text(encoding="utf-8")
-        return "YOURDOMAIN.CLIENT.INHERE" in txt or "YOURDOMAIN.SERVER.INHERE" in txt
-    except Exception:  # noqa: BLE001
-        return False
+    if HEX_PLACEHOLDER_RE.match(stripped):
+        return True
+    return any(mark in stripped for mark in DOMAIN_PLACEHOLDERS)
 
 
+def find_leftovers(obj: Any, path: str = "") -> List[str]:
+    found: List[str] = []
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            found.extend(find_leftovers(value, f"{path}.{key}" if path else str(key)))
+    elif isinstance(obj, list):
+        for index, item in enumerate(obj):
+            found.extend(find_leftovers(item, f"{path}[{index}]"))
+    elif isinstance(obj, str):
+        stripped = obj.strip()
+        hit = (
+            stripped == "REGENERATE PLS"
+            or "(random)" in stripped
+            or bool(HEX_PLACEHOLDER_RE.match(stripped))
+            or any(mark in stripped for mark in DOMAIN_PLACEHOLDERS)
+        )
+        if hit:
+            found.append(f"{path} = {obj[:60]}")
+    return found
+
+
+# --- Заполнение конфига ---
 def fill_config(
-    config: dict[str, Any],
-    client_domain: str | None = None,
-    server_domain: str | None = None,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    protocol = config.get("protocol", "")
-    stream = config.get("streamSettings", {}) or {}
-    security = stream.get("security", "")
-    network = stream.get("network", "")
-    generated: dict[str, Any] = {}
+    config: Dict[str, Any],
+    client_domain: Optional[str] = None,
+    server_domain: Optional[str] = None,
+) -> Dict[str, Any]:
+    protocol = str(config.get("protocol", ""))
+    stream = config.get("streamSettings") or {}
+    security = str(stream.get("security", ""))
+    generated: Dict[str, str] = {}
 
-    # Reality: privateKey / publicKey / shortId / spiderX
     if security == "reality":
         priv, pub = gen_reality_keypair()
-        generated["privateKey"] = priv
-        generated["publicKey"] = pub
-        generated["shortId"] = gen_short_id()
-        generated["spiderX"] = gen_spider_x_path()
+        generated["reality_privateKey"] = priv
+        generated["reality_publicKey"] = pub
+        generated["reality_shortId"] = gen_short_id()
+        generated["reality_spiderX"] = gen_spider_x_path()
 
-    # ML-KEM-768: генерируем пару encryption/decryption
-    mlkem_decryption, mlkem_encryption = gen_mlkem768_keys()
-    generated["mlkem_decryption"] = mlkem_decryption
-    generated["mlkem_encryption"] = mlkem_encryption
-
-    # XHTTP-паддинг
-    if network == "xhttp":
-        generated["xPaddingKey"] = gen_hex(16)
-        generated["sessionIDKey"] = gen_hex(16)
-        generated["seqKey"] = gen_hex(8)
-
-    # Клиенты
     if protocol == "vless":
-        cid = gen_uuid()
-        client = {"id": cid, "flow": "", "email": "generated-client"}
-        config.setdefault("settings", {})["clients"] = [client]
-        generated["client_id"] = cid
-        generated["flow"] = ""
+        decryption, encryption, source = gen_vless_enc_pair()
+        generated["vless_decryption"] = decryption
+        generated["vless_encryption"] = encryption
+        generated["vless_enc_source"] = source
+        clients = (config.get("settings") or {}).get("clients")
+        if not clients:
+            client_id = gen_uuid()
+            generated["client_id"] = client_id
+            config.setdefault("settings", {})["clients"] = [
+                {"id": client_id, "flow": "", "email": "generated-client"}
+            ]
     elif protocol == "trojan":
-        pwd = gen_password()
-        config.setdefault("settings", {})["clients"] = [
-            {"password": pwd, "email": "generated-client"}
-        ]
-        generated["client_password"] = pwd
+        password = gen_password()
+        generated["client_password"] = password
+        config.setdefault("settings", {})["password"] = password
     elif protocol == "shadowsocks":
-        pwd = gen_ss_password()
-        config.setdefault("settings", {})["password"] = pwd
-        generated["ss_password"] = pwd
-    elif protocol == "mtproto":
-        sec = gen_mtproto_secret()
-        config.setdefault("settings", {})["users"] = [{"secret": sec}]
-        generated["mtproto_secret"] = sec
+        settings = config.setdefault("settings", {})
+        password = gen_ss_password(str(settings.get("method", "")))
+        generated["ss_password"] = password
+        if is_placeholder(str(settings.get("password", ""))):
+            settings["password"] = password
 
-    def transform_string(v: str, key: str) -> str:
-        # ML-KEM-768 (decryption/encryption)
-        if key == "decryption" and isinstance(v, str) and "(random)" in v:
-            return mlkem_decryption
-        if key == "encryption" and isinstance(v, str) and "(random)" in v:
-            return mlkem_encryption
-        # Reality
-        if key == "privateKey" and v == "REGENERATE PLS":
-            return generated.get("privateKey", v)
-        if key == "publicKey" and v == "REGENERATE PLS":
-            return generated.get("publicKey", v)
-        if key == "spiderX":
-            if v == "REGENERATE PLS" or v == "":
-                return generated.get("spiderX", gen_spider_x_path())
-            return v
-        # shortIds
-        if key == "shortIds" and isinstance(v, list):
-            return [generated.get("shortId", x) if x == "REGENERATE PLS" else x for x in v]
-        # Известные hex-ключи
-        if key == "xPaddingKey":
-            return generated.get("xPaddingKey", gen_hex(16))
-        if key == "sessionIDKey":
-            return generated.get("sessionIDKey", gen_hex(16))
-        if key == "seqKey":
-            return generated.get("seqKey", gen_hex(8))
-        # Любые прочие *HEX* плейсхолдеры
-        hx = gen_hex_from_placeholder(v)
-        if hx is not None:
-            return hx
-        if v == "REGENERATE PLS":
-            return gen_password()
-        # Домены
+    def transform_string(value: str, key: Optional[str]) -> str:
+        if key == "decryption" and "(random)" in value:
+            return generated.get("vless_decryption", value)
+        if key == "encryption" and "(random)" in value:
+            return generated.get("vless_encryption", value)
+        if key in ("privateKey", "publicKey") and value == "REGENERATE PLS":
+            return generated.get(f"reality_{key}", value)
+        if key == "spiderX" and (value == "REGENERATE PLS" or not value.strip()):
+            return generated.get("reality_spiderX", gen_spider_x_path())
+        generated_hex = gen_hex_from_placeholder(value)
+        if generated_hex is not None:
+            generated.setdefault(f"{key or 'value'}_hex", generated_hex)
+            return generated_hex
+        if value == "REGENERATE PLS":
+            password = gen_password()
+            generated.setdefault(f"{key or 'value'}_password", password)
+            return password
         if client_domain:
-            v = v.replace("YOURDOMAIN.CLIENT.INHERE", client_domain)
+            value = value.replace("YOURDOMAIN.CLIENT.INHERE", client_domain)
         if server_domain:
-            v = v.replace("YOURDOMAIN.SERVER.INHERE", server_domain)
-        return v
+            value = value.replace("YOURDOMAIN.SERVER.INHERE", server_domain)
+        return value
 
-    def walk(obj: Any, key: str | None = None) -> Any:
+    def walk(obj: Any, key: Optional[str] = None) -> Any:
         if isinstance(obj, dict):
             return {k: walk(v, k) for k, v in obj.items()}
         if isinstance(obj, list):
-            if key == "shortIds" and security == "reality":
-                return [generated.get("shortId", x) if x == "REGENERATE PLS" else x for x in obj]
-            return [walk(x, key) for x in obj]
+            if key == "shortIds":
+                short_id = generated.get("reality_shortId", "")
+                return [short_id if item == "REGENERATE PLS" else item for item in obj]
+            return [walk(item, key) for item in obj]
         if isinstance(obj, str):
             return transform_string(obj, key)
         return obj
 
-    return walk(config), generated
-
-
-def find_remaining_placeholders(obj: Any, found: list[str] | None = None) -> list[str]:
-    if found is None:
-        found = []
-    if isinstance(obj, dict):
-        for v in obj.values():
-            find_remaining_placeholders(v, found)
-    elif isinstance(obj, list):
-        for x in obj:
-            find_remaining_placeholders(x, found)
-    elif isinstance(obj, str):  # noqa: SIM102
-        if obj in ("REGENERATE PLS",) or HEX_PLACEHOLDER_RE.match(obj.strip()):
-            found.append(obj)
-    return found
+    return walk(config)
 
 
 # --- Пакетный выбор ---
-def parse_selection(text: str, count: int) -> list[int]:
-    text = text.strip().lower()
-    if text in ("all", "все", "*", "a", "всё"):
+def parse_selection(text: str, count: int) -> List[int]:
+    normalized = text.strip().lower()
+    if normalized in ("all", "все", "всё", "*", "a", "в"):
         return list(range(1, count + 1))
-    selected: set = set()
-    text = text.replace(",", " ").replace(";", " ").replace("\t", " ")
-    for token in text.split():
-        if not token:
-            continue
+    normalized = normalized.replace(",", " ").replace(";", " ").replace("\t", " ")
+    selected: Set[int] = set()
+    for token in normalized.split():
         if "-" in token:
             parts = token.split("-")
             if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-                lo, hi = sorted((int(parts[0]), int(parts[1])))
-                selected.update(i for i in range(lo, hi + 1) if 1 <= i <= count)
+                low, high = sorted((int(parts[0]), int(parts[1])))
+                selected.update(i for i in range(low, high + 1) if 1 <= i <= count)
         elif token.isdigit():
-            i = int(token)
-            if 1 <= i <= count:
-                selected.add(i)
+            index = int(token)
+            if 1 <= index <= count:
+                selected.add(index)
     return sorted(selected)
 
 
-def choose_configs(configs: list[Path]) -> list[Path]:
+_WL_CACHE: Dict[Path, bool] = {}
+
+
+def is_whitelist_quick(path: Path) -> bool:
+    if path in _WL_CACHE:
+        return _WL_CACHE[path]
+    if "whitelist" in path.name.lower():
+        _WL_CACHE[path] = True
+        return True
+    try:
+        text = path.read_text(encoding="utf-8")
+        result = any(mark in text for mark in DOMAIN_PLACEHOLDERS)
+    except OSError:
+        result = False
+    _WL_CACHE[path] = result
+    return result
+
+
+def choose_configs(configs: List[Path]) -> List[Path]:
     print("\nДоступные конфиги:\n")
-    for i, cfg in enumerate(configs, 1):
-        mark = " [WL]" if is_whitelist_quick(cfg) else ""
-        print(f"  {i:>2}. {cfg.stem}{mark}")
+    for index, config_path in enumerate(configs, 1):
+        mark = " [WL]" if is_whitelist_quick(config_path) else ""
+        print(f"  {index:>2}. {config_path.stem}{mark}")
     print("\nВвод: номера через запятую/пробел, диапазоны (напр. '1,3,5-7'), или 'all'")
     while True:
-        sel = parse_selection(input("Выбор: "), len(configs))
-        if sel:
-            return [configs[i - 1] for i in sel]
+        selected = parse_selection(input("Выбор: "), len(configs))
+        if selected:
+            return [configs[i - 1] for i in selected]
         print("Ничего не выбрано, попробуйте снова.")
 
 
-def process_one(selected: Path, client_domain: str | None, server_domain: str | None) -> None:
-    logger.info(f"Обработка: {selected.name}")
-    print(f"\n>>> {selected.name}")
-    with open(selected, "r", encoding="utf-8") as f:
-        config = json.load(f)
-
-    config, generated = fill_config(config, client_domain, server_domain)
-
-    left = find_remaining_placeholders(config)
-    if left:
-        logger.warning(f"Остались плейсхолдеры: {sorted(set(left))}")
-        print(f"   [ВНИМАНИЕ] Остались плейсхолдеры: {sorted(set(left))}")
-
-    BUILD_DIR.mkdir(exist_ok=True)
-    out_path = BUILD_DIR / selected.name
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2, ensure_ascii=False)
-    print(f"   [OK] Готовый конфиг сохранён: {out_path.name}")
-    logger.info(f"Конфиг сохранён: {out_path}")
-
-    # Выводим секреты в консоль
-    print("   Сгенерированные секреты:")
-    for k, v in generated.items():
-        print(f"     {k}: {v}")
+def load_config(path: Path) -> Optional[Dict[str, Any]]:
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except json.JSONDecodeError as e:
+        print(f"   [ОШИБКА] невалидный JSON: {e}")
+        return None
+    except OSError as e:
+        print(f"   [ОШИБКА] файл не читается: {e}")
+        return None
+    if not isinstance(data, dict):
+        print("   [ОШИБКА] верхний уровень JSON должен быть объектом")
+        return None
+    return data
 
 
-def main() -> None:
+def process_one(
+    source: Path,
+    out_dir: Path,
+    client_domain: Optional[str],
+    server_domain: Optional[str],
+    force: bool,
+) -> str:
+    print(f"\n>>> {source.name}")
+    config = load_config(source)
+    if config is None:
+        return "broken"
+
+    protocol = str(config.get("protocol", ""))
+    if protocol in SKIP_PROTOCOLS:
+        print(f"   [ПРОПУСК] протокол {protocol} его не собираю, секреты выписываются вручную")
+        return "skipped"
+
+    config = fill_config(config, client_domain, server_domain)
+
+    for line in find_leftovers(config):
+        print(f"   [ВНИМАНИЕ] не заполнено: {line}")
+
+    errors, warn_lines = validate_inbound(config)
+    for line in warn_lines:
+        print(f"   [ПРЕДУПРЕЖДЕНИЕ] {line}")
+    for line in errors:
+        print(f"   [ОШИБКА СХЕМЫ] {line}")
+
+    if errors and not force:
+        print("   [ПРОПУСК ЗАПИСИ] конфиг не проходит схему панели, исправь шаблон")
+        return "invalid"
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / source.name
+    with open(out_path, "w", encoding="utf-8") as handle:
+        json.dump(config, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+    print(f"   [OK] сохранён: {out_path}")
+    return "invalid" if errors else "ok"
+
+
+def collect_domains(
+    paths: List[Path],
+    args: argparse.Namespace,
+) -> Tuple[Optional[str], Optional[str]]:
+    if not any(is_whitelist_quick(path) for path in paths):
+        return None, None
+    client_domain = args.client_domain
+    server_domain = args.server_domain
+    if client_domain and server_domain:
+        return client_domain, server_domain
+    print("\nСреди выбранных есть WhiteList/CDN конфиги.")
+    print("Домены будут применены ко всем WL-конфигам партии.")
+    if not client_domain:
+        client_domain = input("  Домен КЛИЕНТА (публичный): ").strip()
+    if not server_domain:
+        server_domain = input("  Домен СЕРВЕРА (на сервер): ").strip()
+    return client_domain or None, server_domain or None
+
+
+def run_batch(paths: List[Path], out_dir: Path, args: argparse.Namespace) -> Dict[str, int]:
+    client_domain, server_domain = collect_domains(paths, args)
+    tally: Dict[str, int] = {"ok": 0, "invalid": 0, "broken": 0, "skipped": 0}
+    for path in paths:
+        logger.info("Обработка: %s", path.name)
+        tally[process_one(path, out_dir, client_domain, server_domain, args.force)] += 1
+    return tally
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Генератор готовых inbound-конфигов для панели 3x-ui",
+    )
+    parser.add_argument("--list", action="store_true", help="показать список конфигов и выйти")
+    parser.add_argument("--all", action="store_true", help="обработать все конфиги")
+    parser.add_argument("--pick", help="номера/диапазоны, напр. '1,3,5-7'")
+    parser.add_argument("--client-domain", help="домен клиента для WL-конфигов")
+    parser.add_argument("--server-domain", help="домен сервера для WL-конфигов")
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=BUILD_DIR,
+        help=f"папка результата (по умолчанию {BUILD_DIR})",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="записывать конфиг даже если он не проходит схему панели",
+    )
+    parser.add_argument(
+        "--pause",
+        action="store_true",
+        help="спросить Enter в конце (для запуска двойным кликом)",
+    )
+    return parser
+
+
+def resolve_targets(configs: List[Path], args: argparse.Namespace) -> Optional[List[Path]]:
+    if args.all:
+        return configs
+    if args.pick:
+        indexes = parse_selection(args.pick, len(configs))
+        if not indexes:
+            print("[ОШИБКА] в --pick нет корректных номеров")
+            return None
+        return [configs[i - 1] for i in indexes]
+    return None
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
     logger.info("Запуск генератора конфигов")
+
     print("=" * 62)
-    print("  XRay / 3X-UI Config Generator  (batch v5)")
+    print("  XRay / 3x-ui Config Generator")
     print("=" * 62)
-    xm = "библиотека `cryptography`" if HAS_CRYPTO else "чистая реализация RFC 7748"
-    mlkem = "liboqs-python (настоящая ML-KEM-768)" if HAS_OQS else "случайные байты"
-    print(f"  X25519 для Reality : {xm}")
-    print(f"  ML-KEM-768         : {mlkem}")
+    x25519_source = "cryptography" if HAS_CRYPTO else "чистая реализация RFC 7748"
+    enc_pair = _vlessenc_from_xray()
+    enc_source = "xray vlessenc" if enc_pair else "ML-KEM-768 handshake + x25519 auth"
+    print(f"  X25519 для Reality : {x25519_source}")
+    print(f"  VLESS Encryption   : {enc_source}")
 
     if not CONFIGS_DIR.exists():
-        logger.error(f"Папка '{CONFIGS_DIR}' не найдена")
-        print(f"\n[ОШИБКА] Папка '{CONFIGS_DIR}' не найдена.")
-        return
+        print(f"[ОШИБКА] папка '{CONFIGS_DIR}' не найдена")
+        return 1
     configs = sorted(CONFIGS_DIR.glob("*.json"))
     if not configs:
-        logger.error(f"В '{CONFIGS_DIR}' нет .json файлов")
-        print(f"\n[ОШИБКА] В '{CONFIGS_DIR}' нет .json файлов.")
-        return
+        print(f"[ОШИБКА] в '{CONFIGS_DIR}' нет .json файлов")
+        return 1
 
-    while True:
-        selected = choose_configs(configs)
-        client_domain = server_domain = None
-        if any(is_whitelist_quick(p) for p in selected):
-            print("\nСреди выбранных есть WhiteList/CDN конфиги.")
-            print("Домены будут применены ко ВСЕМ WL-конфигам партии.")
-            client_domain = input("  Домен КЛИЕНТА (публичный): ").strip()
-            server_domain = input("  Домен СЕРВЕРА (на сервер): ").strip()
+    if args.list:
+        choose_configs(configs)
+        return 0
 
-        for path in selected:
-            process_one(path, client_domain, server_domain)
+    targets = resolve_targets(configs, args)
+    total: Dict[str, int] = {"ok": 0, "invalid": 0, "broken": 0, "skipped": 0}
+    if targets is not None:
+        for key, value in run_batch(targets, args.out, args).items():
+            total[key] += value
+    else:
+        while True:
+            for key, value in run_batch(choose_configs(configs), args.out, args).items():
+                total[key] += value
+            print("\nПакет обработан.")
+            if input("\nСгенерировать ещё партию? (y/n): ").strip().lower() not in (
+                "y",
+                "yes",
+                "д",
+                "да",
+            ):
+                break
 
-        print("\nПакет обработан.")
-        logger.info("Пакет обработан")
-        if input("\nСгенерировать ещё партию? (y/n): ").strip().lower() not in (
-            "y",
-            "yes",
-            "д",
-            "да",
-        ):
-            break
-    print("\nГотово!")
-    logger.info("Генератор завершён")
+    print("\n" + "=" * 62)
+    print(
+        f"  Итог: {total['ok']} записано, {total['invalid']} с ошибками схемы, "
+        f"{total['skipped']} пропущено, {total['broken']} битых JSON"
+    )
+    print("=" * 62)
+    print("  Секреты не выводятся в консоль и не пишутся в лог - они только в файлах.")
+    print("=" * 62)
+    if args.pause:
+        input("\nНажмите Enter для выхода...")
+    return 0
 
 
 if __name__ == "__main__":
     try:
-        main()
+        sys.exit(main())
     except KeyboardInterrupt:
         print("\nОтменено пользователем.")
-        logger.info("Отменено пользователем")
     except Exception as e:
-        logger.exception(f"Критическая ошибка: {e}")  # noqa: TRY401
         print(f"\n[ОШИБКА] {e}")
-        import traceback
-
         traceback.print_exc()
-    input("\nНажмите Enter для выхода...")
+        sys.exit(1)
