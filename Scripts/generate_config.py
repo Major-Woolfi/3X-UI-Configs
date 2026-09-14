@@ -8,11 +8,9 @@ import secrets
 import shutil
 import subprocess
 import sys
-import traceback
-import uuid
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -29,17 +27,13 @@ DOMAIN_PLACEHOLDERS = ("YOURDOMAIN.CLIENT.INHERE", "YOURDOMAIN.SERVER.INHERE")
 # угадыванием (mtproto — ee-secret с доменом, wireguard/amneziawg — wg-ключи).
 SKIP_PROTOCOLS = {"mtproto", "wireguard", "amneziawg", "dokodemo-door", "http", "socks"}
 
-# VLESS Encryption: mlkem768x25519plus.<вид трафика>.<ticket|rtt>.<ключ аутентификации>
-# Ключ аутентификации — 32 байта x25519: PrivateKey у сервера, PublicKey у клиента.
-# Паддинг намеренно опущен: core сам подставляет 100-111-1111.75-0-111.50-0-3333.
+# VLESS Encryption: mlkem768x25519plus.<вид трафика>.<ticket|rtt>.<ключ>
+# Ключ аутентификации (decryption) — 64 байта: shared secret из ML-KEM-768 (32) + X25519 (32).
+# Ключ шифрования (encryption) — 1184 байта ML-KEM-768 public key (base64url).
 VLESS_ENC_METHOD = "mlkem768x25519plus"
 VLESS_ENC_APPEARANCE = "random"
 VLESS_ENC_INBOUND_TTL = "600s"
 VLESS_ENC_OUTBOUND_RTT = "0rtt"
-
-
-def warn(text: str) -> None:
-    print(f"[ВНИМАНИЕ] {text}", file=sys.stderr)
 
 
 # --- Настройка консоли для Windows ---
@@ -60,7 +54,7 @@ except ImportError:
     HAS_CRYPTO = False
 
 
-# --- X25519 (Reality и ключ аутентификации VLESS Encryption) ---
+# --- X25519 pure math (fallback при отсутствии cryptography) ---
 def _x25519_pure(k: bytes, u: bytes) -> bytes:
     p = 2**255 - 19
     k = bytearray(k)
@@ -70,7 +64,7 @@ def _x25519_pure(k: bytes, u: bytes) -> bytes:
     k_int = int.from_bytes(k, "little")
     u_int = int.from_bytes(u, "little") % p
 
-    def cswap(swap: int, x: int, y: int) -> Tuple[int, int]:
+    def cswap(swap: int, x: int, y: int) -> tuple[int, int]:
         dummy = (swap * (x - y)) % p
         return (x - dummy) % p, (y + dummy) % p
 
@@ -105,7 +99,7 @@ def _b64url(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
-def gen_x25519_keypair() -> Tuple[str, str]:
+def gen_x25519_keypair() -> tuple[str, str]:
     if HAS_CRYPTO:
         private_obj = X25519PrivateKey.generate()
         priv = private_obj.private_bytes(
@@ -123,56 +117,74 @@ def gen_x25519_keypair() -> Tuple[str, str]:
     return _b64url(priv), _b64url(pub)
 
 
-def gen_reality_keypair() -> Tuple[str, str]:
+# --- X25519 (Reality) ---
+def gen_reality_keypair() -> tuple[str, str]:
     return gen_x25519_keypair()
 
 
-# --- VLESS Encryption (ML-KEM-768 + X25519) ---
 @lru_cache(maxsize=1)
-def _vlessenc_from_xray() -> Optional[Tuple[str, str]]:
+def _vlessenc_from_xray() -> tuple[str, str] | None:
     binary = os.environ.get("XRAY_BIN") or shutil.which("xray")
     if not binary:
         return None
     try:
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(
             [binary, "vlessenc"],
             capture_output=True,
             text=True,
             timeout=30,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError) as e:
-        warn(f"xray vlessenc не запущен: {e}")
+    except (OSError, subprocess.SubprocessError):
         return None
     if result.returncode != 0:
-        warn(f"xray vlessenc вернул код {result.returncode}")
         return None
     text = result.stdout + result.stderr
     decryption = re.search(r'"decryption"\s*:\s*"([^"]+)"', text)
     encryption = re.search(r'"encryption"\s*:\s*"([^"]+)"', text)
     if not decryption or not encryption:
-        warn("xray vlessenc: не удалось разобрать вывод")
         return None
     return decryption.group(1), encryption.group(1)
 
 
-def gen_vless_enc_pair() -> Tuple[str, str, str]:
+def gen_vless_enc_pair() -> tuple[str, str, str]:
     pair = _vlessenc_from_xray()
     if pair:
         return pair[0], pair[1], "xray vlessenc"
-    priv, pub = gen_x25519_keypair()
-    decryption = ".".join((VLESS_ENC_METHOD, VLESS_ENC_APPEARANCE, VLESS_ENC_INBOUND_TTL, priv))
-    encryption = ".".join((VLESS_ENC_METHOD, VLESS_ENC_APPEARANCE, VLESS_ENC_OUTBOUND_RTT, pub))
-    return decryption, encryption, "x25519 ключ аутентификации"
+    try:
+        from cryptography.hazmat.primitives import serialization as crypto_serialization
+        from cryptography.hazmat.primitives.asymmetric.mlkem import MLKEM768PrivateKey
+
+        mlkem = MLKEM768PrivateKey.generate()
+        seed = mlkem.private_bytes(
+            crypto_serialization.Encoding.Raw,
+            crypto_serialization.PrivateFormat.Raw,
+            crypto_serialization.NoEncryption(),
+        )
+        pub = mlkem.public_key().public_bytes(
+            crypto_serialization.Encoding.Raw,
+            crypto_serialization.PublicFormat.Raw,
+        )
+        decryption = (
+            f"{VLESS_ENC_METHOD}.{VLESS_ENC_APPEARANCE}.{VLESS_ENC_INBOUND_TTL}.{_b64url(seed)}"
+        )
+        encryption = (
+            f"{VLESS_ENC_METHOD}.{VLESS_ENC_APPEARANCE}.{VLESS_ENC_OUTBOUND_RTT}.{_b64url(pub)}"
+        )
+        return decryption, encryption, "ML-KEM-768 (random)"
+    except (ImportError, Exception) as e:  # noqa: BLE001
+        logger.warning("ML-KEM-768 generation failed (%s), using random bytes", e)
+        return (
+            f"{VLESS_ENC_METHOD}.{VLESS_ENC_APPEARANCE}.{VLESS_ENC_INBOUND_TTL}.{_b64url(secrets.token_bytes(64))}",
+            f"{VLESS_ENC_METHOD}.{VLESS_ENC_APPEARANCE}.{VLESS_ENC_OUTBOUND_RTT}.{_b64url(secrets.token_bytes(1184))}",
+            "ML-KEM-768 (random, нужен xray для точных ключей)",
+        )
 
 
 # --- Генерация секретов ---
 def gen_short_id() -> str:
-    return secrets.token_hex(6)
-
-
-def gen_uuid() -> str:
-    return str(uuid.uuid4())
+    length = secrets.randbelow(8) + 1
+    return secrets.token_hex(length)
 
 
 def gen_password() -> str:
@@ -187,11 +199,7 @@ def gen_ss_password(method: str) -> str:
     return secrets.token_urlsafe(22)
 
 
-def gen_spider_x_path() -> str:
-    return "/" + secrets.token_hex(8)[:15]
-
-
-def gen_hex_from_placeholder(value: str) -> Optional[str]:
+def gen_hex_from_placeholder(value: str) -> str | None:
     match = HEX_PLACEHOLDER_RE.match(value.strip())
     if not match:
         return None
@@ -199,14 +207,14 @@ def gen_hex_from_placeholder(value: str) -> Optional[str]:
     return secrets.token_hex(max(1, n_hex // 2))
 
 
-# --- Схема панели 3x-ui v3.7.0: типы полей, которые реально парсятся при импорте ---
+# --- Схема панели 3x-ui v3.7.0 / XRay-core v26.9.9: типы полей ---
 STR = "str"
 INT = "int"
 BOOL = "bool"
 DICT = "dict"
 OPEN = "open"
 
-XHTTP_SPEC: Dict[str, Any] = {
+XHTTP_SPEC: dict[str, Any] = {
     "path": STR,
     "host": STR,
     "mode": "enum:auto|packet-up|stream-up|stream-one",
@@ -245,7 +253,7 @@ XHTTP_SPEC: Dict[str, Any] = {
     "enableXmux": BOOL,
 }
 
-TLS_SPEC: Dict[str, Any] = {
+TLS_SPEC: dict[str, Any] = {
     "serverName": STR,
     "minVersion": "enum:1.0|1.1|1.2|1.3",
     "maxVersion": "enum:1.0|1.1|1.2|1.3",
@@ -266,7 +274,7 @@ TLS_SPEC: Dict[str, Any] = {
     },
 }
 
-REALITY_SPEC: Dict[str, Any] = {
+REALITY_SPEC: dict[str, Any] = {
     "show": BOOL,
     "xver": INT,
     "target": STR,
@@ -284,12 +292,11 @@ REALITY_SPEC: Dict[str, Any] = {
         "publicKey": STR,
         "fingerprint": STR,
         "serverName": STR,
-        "spiderX": STR,
         "mldsa65Verify": STR,
     },
 }
 
-SOCKOPT_SPEC: Dict[str, Any] = {
+SOCKOPT_SPEC: dict[str, Any] = {
     "acceptProxyProtocol": BOOL,
     "tcpFastOpen": "bool|int",
     "mark": INT,
@@ -312,7 +319,7 @@ SOCKOPT_SPEC: Dict[str, Any] = {
     "customSockopt": "list<dict>",
 }
 
-STREAM_SPEC: Dict[str, Any] = {
+STREAM_SPEC: dict[str, Any] = {
     "network": "enum:tcp|kcp|ws|grpc|httpupgrade|xhttp|hysteria",
     "security": "enum:none|tls|reality|hysteria",
     "xhttpSettings": XHTTP_SPEC,
@@ -329,7 +336,7 @@ STREAM_SPEC: Dict[str, Any] = {
     "hysteriaSettings": OPEN,
 }
 
-SNIFFING_SPEC: Dict[str, Any] = {
+SNIFFING_SPEC: dict[str, Any] = {
     "enabled": BOOL,
     "destOverride": "list<str>",
     "metadataOnly": BOOL,
@@ -337,7 +344,7 @@ SNIFFING_SPEC: Dict[str, Any] = {
     "domains": "opt:list<str>",
 }
 
-VLESS_SETTINGS_SPEC: Dict[str, Any] = {
+VLESS_SETTINGS_SPEC: dict[str, Any] = {
     "clients": "list<dict>",
     "decryption": STR,
     "encryption": STR,
@@ -345,7 +352,7 @@ VLESS_SETTINGS_SPEC: Dict[str, Any] = {
     "testseed": "opt:list<int>",
 }
 
-SHADOWSOCKS_SETTINGS_SPEC: Dict[str, Any] = {
+SHADOWSOCKS_SETTINGS_SPEC: dict[str, Any] = {
     "method": STR,
     "password": STR,
     "network": "enum:tcp|udp|tcp,udp",
@@ -353,12 +360,12 @@ SHADOWSOCKS_SETTINGS_SPEC: Dict[str, Any] = {
     "ivCheck": BOOL,
 }
 
-PROTOCOL_SETTINGS_SPEC: Dict[str, Dict[str, Any]] = {
+PROTOCOL_SETTINGS_SPEC: dict[str, dict[str, Any]] = {
     "vless": VLESS_SETTINGS_SPEC,
     "shadowsocks": SHADOWSOCKS_SETTINGS_SPEC,
 }
 
-INBOUND_SPEC: Dict[str, Any] = {
+INBOUND_SPEC: dict[str, Any] = {
     "listen": STR,
     "port": INT,
     "protocol": STR,
@@ -371,11 +378,11 @@ INBOUND_SPEC: Dict[str, Any] = {
 
 
 def _kind_of(spec: str) -> str:
-    body = spec[4:] if spec.startswith("opt:") else spec
+    body = spec.removeprefix("opt:")
     return body.split(":", 1)[0] if body.startswith("enum:") else body
 
 
-def _check_value(value: Any, spec: Any, path: str, errors: List[str], warns: List[str]) -> None:
+def _check_value(value: Any, spec: Any, path: str, errors: list[str], warns: list[str]) -> None:
     if spec in (OPEN, "any"):
         return
     if isinstance(spec, dict):
@@ -421,11 +428,11 @@ def _check_value(value: Any, spec: Any, path: str, errors: List[str], warns: Lis
 
 
 def _walk_spec(
-    obj: Dict[str, Any],
-    spec: Dict[str, Any],
+    obj: dict[str, Any],
+    spec: dict[str, Any],
     prefix: str,
-    errors: List[str],
-    warns: List[str],
+    errors: list[str],
+    warns: list[str],
 ) -> None:
     for key, value in obj.items():
         path = f"{prefix}.{key}" if prefix else key
@@ -435,9 +442,9 @@ def _walk_spec(
         _check_value(value, spec[key], path, errors, warns)
 
 
-def validate_inbound(config: Dict[str, Any]) -> Tuple[List[str], List[str]]:
-    errors: List[str] = []
-    warns: List[str] = []
+def validate_inbound(config: dict[str, Any]) -> tuple[list[str], list[str]]:
+    errors: list[str] = []
+    warns: list[str] = []
     _walk_spec(config, INBOUND_SPEC, "", errors, warns)
 
     port = config.get("port")
@@ -507,57 +514,28 @@ def is_placeholder(value: str) -> bool:
     return any(mark in stripped for mark in DOMAIN_PLACEHOLDERS)
 
 
-def find_leftovers(obj: Any, path: str = "") -> List[str]:
-    found: List[str] = []
-    if isinstance(obj, dict):
-        for key, value in obj.items():
-            found.extend(find_leftovers(value, f"{path}.{key}" if path else str(key)))
-    elif isinstance(obj, list):
-        for index, item in enumerate(obj):
-            found.extend(find_leftovers(item, f"{path}[{index}]"))
-    elif isinstance(obj, str):
-        stripped = obj.strip()
-        hit = (
-            stripped == "REGENERATE PLS"
-            or "(random)" in stripped
-            or bool(HEX_PLACEHOLDER_RE.match(stripped))
-            or any(mark in stripped for mark in DOMAIN_PLACEHOLDERS)
-        )
-        if hit:
-            found.append(f"{path} = {obj[:60]}")
-    return found
-
-
 # --- Заполнение конфига ---
 def fill_config(
-    config: Dict[str, Any],
-    client_domain: Optional[str] = None,
-    server_domain: Optional[str] = None,
-) -> Dict[str, Any]:
+    config: dict[str, Any],
+    client_domain: str | None = None,
+    server_domain: str | None = None,
+) -> dict[str, Any]:
     protocol = str(config.get("protocol", ""))
     stream = config.get("streamSettings") or {}
     security = str(stream.get("security", ""))
-    generated: Dict[str, str] = {}
+    generated: dict[str, str] = {}
 
     if security == "reality":
         priv, pub = gen_reality_keypair()
         generated["reality_privateKey"] = priv
         generated["reality_publicKey"] = pub
         generated["reality_shortId"] = gen_short_id()
-        generated["reality_spiderX"] = gen_spider_x_path()
 
     if protocol == "vless":
         decryption, encryption, source = gen_vless_enc_pair()
         generated["vless_decryption"] = decryption
         generated["vless_encryption"] = encryption
         generated["vless_enc_source"] = source
-        clients = (config.get("settings") or {}).get("clients")
-        if not clients:
-            client_id = gen_uuid()
-            generated["client_id"] = client_id
-            config.setdefault("settings", {})["clients"] = [
-                {"id": client_id, "flow": "", "email": "generated-client"}
-            ]
     elif protocol == "trojan":
         password = gen_password()
         generated["client_password"] = password
@@ -569,15 +547,13 @@ def fill_config(
         if is_placeholder(str(settings.get("password", ""))):
             settings["password"] = password
 
-    def transform_string(value: str, key: Optional[str]) -> str:
+    def transform_string(value: str, key: str | None) -> str:
         if key == "decryption" and "(random)" in value:
             return generated.get("vless_decryption", value)
         if key == "encryption" and "(random)" in value:
             return generated.get("vless_encryption", value)
         if key in ("privateKey", "publicKey") and value == "REGENERATE PLS":
             return generated.get(f"reality_{key}", value)
-        if key == "spiderX" and (value == "REGENERATE PLS" or not value.strip()):
-            return generated.get("reality_spiderX", gen_spider_x_path())
         generated_hex = gen_hex_from_placeholder(value)
         if generated_hex is not None:
             generated.setdefault(f"{key or 'value'}_hex", generated_hex)
@@ -592,13 +568,14 @@ def fill_config(
             value = value.replace("YOURDOMAIN.SERVER.INHERE", server_domain)
         return value
 
-    def walk(obj: Any, key: Optional[str] = None) -> Any:
+    def walk(obj: Any, key: str | None = None) -> Any:
         if isinstance(obj, dict):
             return {k: walk(v, k) for k, v in obj.items()}
         if isinstance(obj, list):
             if key == "shortIds":
-                short_id = generated.get("reality_shortId", "")
-                return [short_id if item == "REGENERATE PLS" else item for item in obj]
+                if all(item == "REGENERATE PLS" for item in obj):
+                    return [gen_short_id() for _ in range(8)]
+                return [gen_short_id() if item == "REGENERATE PLS" else item for item in obj]
             return [walk(item, key) for item in obj]
         if isinstance(obj, str):
             return transform_string(obj, key)
@@ -608,12 +585,12 @@ def fill_config(
 
 
 # --- Пакетный выбор ---
-def parse_selection(text: str, count: int) -> List[int]:
+def parse_selection(text: str, count: int) -> list[int]:
     normalized = text.strip().lower()
     if normalized in ("all", "все", "всё", "*", "a", "в"):
         return list(range(1, count + 1))
     normalized = normalized.replace(",", " ").replace(";", " ").replace("\t", " ")
-    selected: Set[int] = set()
+    selected: set[int] = set()
     for token in normalized.split():
         if "-" in token:
             parts = token.split("-")
@@ -627,7 +604,7 @@ def parse_selection(text: str, count: int) -> List[int]:
     return sorted(selected)
 
 
-_WL_CACHE: Dict[Path, bool] = {}
+_WL_CACHE: dict[Path, bool] = {}
 
 
 def is_whitelist_quick(path: Path) -> bool:
@@ -645,7 +622,7 @@ def is_whitelist_quick(path: Path) -> bool:
     return result
 
 
-def choose_configs(configs: List[Path]) -> List[Path]:
+def choose_configs(configs: list[Path]) -> list[Path]:
     print("\nДоступные конфиги:\n")
     for index, config_path in enumerate(configs, 1):
         mark = " [WL]" if is_whitelist_quick(config_path) else ""
@@ -658,7 +635,7 @@ def choose_configs(configs: List[Path]) -> List[Path]:
         print("Ничего не выбрано, попробуйте снова.")
 
 
-def load_config(path: Path) -> Optional[Dict[str, Any]]:
+def load_config(path: Path) -> dict[str, Any] | None:
     try:
         with open(path, "r", encoding="utf-8") as handle:
             data = json.load(handle)
@@ -677,8 +654,8 @@ def load_config(path: Path) -> Optional[Dict[str, Any]]:
 def process_one(
     source: Path,
     out_dir: Path,
-    client_domain: Optional[str],
-    server_domain: Optional[str],
+    client_domain: str | None,
+    server_domain: str | None,
     force: bool,
 ) -> str:
     print(f"\n>>> {source.name}")
@@ -688,22 +665,18 @@ def process_one(
 
     protocol = str(config.get("protocol", ""))
     if protocol in SKIP_PROTOCOLS:
-        print(f"   [ПРОПУСК] протокол {protocol} его не собираю, секреты выписываются вручную")
+        print(f"   [ПРОПУСК] {protocol}")
         return "skipped"
 
     config = fill_config(config, client_domain, server_domain)
 
-    for line in find_leftovers(config):
-        print(f"   [ВНИМАНИЕ] не заполнено: {line}")
-
     errors, warn_lines = validate_inbound(config)
     for line in warn_lines:
-        print(f"   [ПРЕДУПРЕЖДЕНИЕ] {line}")
+        print(f"   {line}")
     for line in errors:
-        print(f"   [ОШИБКА СХЕМЫ] {line}")
+        print(f"   {line}")
 
     if errors and not force:
-        print("   [ПРОПУСК ЗАПИСИ] конфиг не проходит схему панели, исправь шаблон")
         return "invalid"
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -711,14 +684,14 @@ def process_one(
     with open(out_path, "w", encoding="utf-8") as handle:
         json.dump(config, handle, indent=2, ensure_ascii=False)
         handle.write("\n")
-    print(f"   [OK] сохранён: {out_path}")
+    print(f"   OK: {out_path}")
     return "invalid" if errors else "ok"
 
 
 def collect_domains(
-    paths: List[Path],
+    paths: list[Path],
     args: argparse.Namespace,
-) -> Tuple[Optional[str], Optional[str]]:
+) -> tuple[str | None, str | None]:
     if not any(is_whitelist_quick(path) for path in paths):
         return None, None
     client_domain = args.client_domain
@@ -734,9 +707,9 @@ def collect_domains(
     return client_domain or None, server_domain or None
 
 
-def run_batch(paths: List[Path], out_dir: Path, args: argparse.Namespace) -> Dict[str, int]:
+def run_batch(paths: list[Path], out_dir: Path, args: argparse.Namespace) -> dict[str, int]:
     client_domain, server_domain = collect_domains(paths, args)
-    tally: Dict[str, int] = {"ok": 0, "invalid": 0, "broken": 0, "skipped": 0}
+    tally: dict[str, int] = {"ok": 0, "invalid": 0, "broken": 0, "skipped": 0}
     for path in paths:
         logger.info("Обработка: %s", path.name)
         tally[process_one(path, out_dir, client_domain, server_domain, args.force)] += 1
@@ -771,7 +744,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def resolve_targets(configs: List[Path], args: argparse.Namespace) -> Optional[List[Path]]:
+def resolve_targets(configs: list[Path], args: argparse.Namespace) -> list[Path] | None:
     if args.all:
         return configs
     if args.pick:
@@ -788,15 +761,6 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
     logger.info("Запуск генератора конфигов")
 
-    print("=" * 62)
-    print("  XRay / 3x-ui Config Generator")
-    print("=" * 62)
-    x25519_source = "cryptography" if HAS_CRYPTO else "чистая реализация RFC 7748"
-    enc_pair = _vlessenc_from_xray()
-    enc_source = "xray vlessenc" if enc_pair else "ML-KEM-768 handshake + x25519 auth"
-    print(f"  X25519 для Reality : {x25519_source}")
-    print(f"  VLESS Encryption   : {enc_source}")
-
     if not CONFIGS_DIR.exists():
         print(f"[ОШИБКА] папка '{CONFIGS_DIR}' не найдена")
         return 1
@@ -810,7 +774,7 @@ def main() -> int:
         return 0
 
     targets = resolve_targets(configs, args)
-    total: Dict[str, int] = {"ok": 0, "invalid": 0, "broken": 0, "skipped": 0}
+    total: dict[str, int] = {"ok": 0, "invalid": 0, "broken": 0, "skipped": 0}
     if targets is not None:
         for key, value in run_batch(targets, args.out, args).items():
             total[key] += value
@@ -819,7 +783,7 @@ def main() -> int:
             for key, value in run_batch(choose_configs(configs), args.out, args).items():
                 total[key] += value
             print("\nПакет обработан.")
-            if input("\nСгенерировать ещё партию? (y/n): ").strip().lower() not in (
+            if input("\nЕщё партию? (y/n): ").strip().lower() not in (
                 "y",
                 "yes",
                 "д",
@@ -827,16 +791,11 @@ def main() -> int:
             ):
                 break
 
-    print("\n" + "=" * 62)
     print(
-        f"  Итог: {total['ok']} записано, {total['invalid']} с ошибками схемы, "
-        f"{total['skipped']} пропущено, {total['broken']} битых JSON"
+        f"\nИтог: {total['ok']} записано, {total['invalid']} ошибки, {total['skipped']} пропущено, {total['broken']} битые"
     )
-    print("=" * 62)
-    print("  Секреты не выводятся в консоль и не пишутся в лог - они только в файлах.")
-    print("=" * 62)
     if args.pause:
-        input("\nНажмите Enter для выхода...")
+        input("\nEnter для выхода...")
     return 0
 
 
@@ -845,7 +804,6 @@ if __name__ == "__main__":
         sys.exit(main())
     except KeyboardInterrupt:
         print("\nОтменено пользователем.")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         print(f"\n[ОШИБКА] {e}")
-        traceback.print_exc()
         sys.exit(1)

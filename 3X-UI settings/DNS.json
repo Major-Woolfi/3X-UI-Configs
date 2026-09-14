@@ -1,0 +1,8 @@
+{
+  "servers": [
+    "https://cloudflare-dns.com/dns-query",
+    "https://dns.google/dns-query",
+    "8.8.8.8",
+    "1.1.1.1"
+  ]
+}
