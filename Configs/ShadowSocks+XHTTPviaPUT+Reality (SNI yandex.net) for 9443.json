@@ -1,12 +1,14 @@
 {
   "listen": "",
-  "port": 443,
-  "protocol": "vless",
-  "tag": "in-443-tcp",
+  "port": 9443,
+  "protocol": "shadowsocks",
+  "tag": "in-9443-tcpudp",
   "settings": {
     "clients": [ ],
-    "decryption": "ML-KEM-768 (random)",
-    "encryption": "ML-KEM-768 (random)"
+    "method": "chacha20-ietf-poly1305",
+    "password": "REGENERATE PLS",
+    "network": "tcp,udp",
+    "ivCheck": false
   },
   "sniffing": {
     "enabled": true,
@@ -20,9 +22,9 @@
   "streamSettings": {
     "network": "xhttp",
     "xhttpSettings": {
-      "path": "/static/app.js",
-      "host": "YOURDOMAIN.CLIENT.INHERE",
-      "mode": "packet-up",
+      "path": "",
+      "host": "yandex.net",
+      "mode": "auto",
       "xPaddingBytes": "100-1000",
       "xPaddingObfsMode": true,
       "xPaddingKey": "32HEX (use random generator)",
@@ -35,19 +37,15 @@
       "sessionIDLength": "16-32",
       "seqPlacement": "query",
       "seqKey": "16HEX (use random generator)",
-      "uplinkDataPlacement": "auto",
-      "uplinkDataKey": "v",
+      "uplinkDataPlacement": "",
+      "uplinkDataKey": "",
       "scMaxEachPostBytes": "1000000",
       "noSSEHeader": false,
       "scMaxBufferedPosts": 30,
       "scStreamUpServerSecs": "20-80",
       "serverMaxHeaderBytes": 0,
-      "uplinkHTTPMethod": "GET",
-      "headers": {
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36 OPR/135.0.0.0 (Edition Yx GX)"
-      },
+      "uplinkHTTPMethod": "PUT",
+      "headers": { },
       "scMinPostsIntervalMs": "",
       "uplinkChunkSize": 0,
       "noGRPCHeader": false,
@@ -61,40 +59,52 @@
       },
       "enableXmux": true
     },
-    "security": "tls",
-    "tlsSettings": {
-      "serverName": "YOURDOMAIN.CLIENT.INHERE",
-      "minVersion": "1.2",
-      "maxVersion": "1.3",
-      "cipherSuites": "",
-      "rejectUnknownSni": false,
-      "disableSystemRoot": false,
-      "enableSessionResumption": true,
-      "certificates": [
-        {
-          "certificateFile": "/root/cert/YOURDOMAIN.SERVER.INHERE/fullchain.pem",
-          "keyFile": "/root/cert/YOURDOMAIN.SERVER.INHERE/privkey.pem",
-          "ocspStapling": 0,
-          "oneTimeLoading": true,
-          "usage": "encipherment",
-          "buildChain": false,
-          "useFile": true
-        }
+    "security": "reality",
+    "realitySettings": {
+      "show": false,
+      "xver": 0,
+      "target": "yandex.net:443",
+      "serverNames": [
+        "xn--d1acpjx3f.xn--p1ai",
+        "yandex.aero",
+        "yandex.jobs",
+        "yandex.net",
+        "yandex.org",
+        "yandex.de",
+        "ya.ru",
+        "yandex.it",
+        "yandex.uz",
+        "yandex.tm",
+        "yandex.tj",
+        "yandex.ru",
+        "yandex.md",
+        "yandex.lv",
+        "yandex.lt",
+        "yandex.kz",
+        "yandex.fr",
+        "yandex.ee",
+        "yandex.com.tr",
+        "yandex.com.ge",
+        "yandex.com.am",
+        "yandex.com",
+        "yandex.co.il",
+        "yandex.by",
+        "yandex.az",
+        "yandex.tr"
       ],
-      "alpn": [
-        "h3",
-        "h2",
-        "http/1.1"
+      "privateKey": "REGENERATE PLS",
+      "minClientVer": "",
+      "maxClientVer": "",
+      "maxTimediff": 0,
+      "shortIds": [
+        "REGENERATE PLS"
       ],
-      "echServerKeys": "",
-      "curvePreferences": [
-        "X25519MLKEM768"
-      ],
+      "mldsa65Seed": "",
       "settings": {
+        "publicKey": "REGENERATE PLS",
         "fingerprint": "randomized",
-        "echConfigList": "",
-        "pinnedPeerCertSha256": [ ],
-        "verifyPeerCertByName": ""
+        "serverName": "",
+        "mldsa65Verify": ""
       }
     },
     "externalProxy": [ ],
@@ -105,6 +115,7 @@
         "maxIdleTimeout": 30,
         "keepAlivePeriod": 10,
         "disablePathMTUDiscovery": true,
+        "disableStatelessReset": true,
         "maxIncomingStreams": 1024,
         "initStreamReceiveWindow": 8388608,
         "maxStreamReceiveWindow": 8388608,
@@ -128,19 +139,14 @@
       "tcpcongestion": "bbr",
       "acceptProxyProtocol": false,
       "mark": 0,
-      "tcpMptcp": false,
-      "domainStrategy": "AsIs",
+      "tcpMptcp": true,
+      "domainStrategy": "UseIP",
       "dialerProxy": "",
       "V6Only": false,
       "tcpWindowClamp": 0,
       "interface": "",
-      "trustedXForwardedFor": [
-        "CF-Connecting-IP",
-        "X-Real-IP",
-        "True-Client-IP",
-        "X-Client-IP"
-      ],
-      "addressPortStrategy": "none",
+      "trustedXForwardedFor": [ ],
+      "addressPortStrategy": "SrvPortAndAddress",
       "customSockopt": [ ]
     }
   }

@@ -24,12 +24,12 @@ HEX_PLACEHOLDER_RE = re.compile(r"^\s*(\d+)\s*HEX", re.IGNORECASE)
 DOMAIN_PLACEHOLDERS = ("YOURDOMAIN.CLIENT.INHERE", "YOURDOMAIN.SERVER.INHERE")
 
 # 3x-ui хранит эти протоколы в структурах, которые генератор соберёт только
-# угадыванием (mtproto — ee-secret с доменом, wireguard/amneziawg — wg-ключи).
+# угадыванием (mtproto - ee-secret с доменом, wireguard/amneziawg - wg-ключи).
 SKIP_PROTOCOLS = {"mtproto", "wireguard", "amneziawg", "dokodemo-door", "http", "socks"}
 
 # VLESS Encryption: mlkem768x25519plus.<вид трафика>.<ticket|rtt>.<ключ>
-# Ключ аутентификации (decryption) — 64 байта: shared secret из ML-KEM-768 (32) + X25519 (32).
-# Ключ шифрования (encryption) — 1184 байта ML-KEM-768 public key (base64url).
+# Ключ аутентификации (decryption) - 64 байта: shared secret из ML-KEM-768 (32) + X25519 (32).
+# Ключ шифрования (encryption) - 1184 байта ML-KEM-768 public key (base64url).
 VLESS_ENC_METHOD = "mlkem768x25519plus"
 VLESS_ENC_APPEARANCE = "random"
 VLESS_ENC_INBOUND_TTL = "600s"
@@ -192,7 +192,7 @@ def gen_password() -> str:
 
 
 def gen_ss_password(method: str) -> str:
-    # У 2022-blake3-* пароль — это base64 ключ фиксированной длины, а не строка.
+    # У 2022-blake3-* пароль - это base64 ключ фиксированной длины, а не строка.
     if "2022-blake3" in method:
         n_bytes = 16 if "128" in method else 32
         return base64.b64encode(secrets.token_bytes(n_bytes)).decode()
@@ -485,7 +485,7 @@ def validate_inbound(config: dict[str, Any]) -> tuple[list[str], list[str]]:
             if concurrency not in ("", "0") and connections not in ("", "0"):
                 warns.append(
                     "xhttpSettings.xmux: maxConcurrency и maxConnections взаимоисключающие, "
-                    "xray-core отклонит конфиг — оставь заполненным только одно из них"
+                    "xray-core отклонит конфиг - оставь заполненным только одно из них"
                 )
 
     tls = stream.get("tlsSettings")

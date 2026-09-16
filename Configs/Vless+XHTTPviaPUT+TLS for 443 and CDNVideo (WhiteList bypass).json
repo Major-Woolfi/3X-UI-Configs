@@ -107,6 +107,7 @@
         "maxIdleTimeout": 30,
         "keepAlivePeriod": 10,
         "disablePathMTUDiscovery": true,
+        "disableStatelessReset": true,
         "maxIncomingStreams": 1024,
         "initStreamReceiveWindow": 8388608,
         "maxStreamReceiveWindow": 8388608,
