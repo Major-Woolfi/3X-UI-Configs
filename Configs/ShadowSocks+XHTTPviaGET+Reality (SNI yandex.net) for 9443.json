@@ -102,7 +102,7 @@
       "mldsa65Seed": "",
       "settings": {
         "publicKey": "REGENERATE PLS",
-        "fingerprint": "randomized",
+        "fingerprint": "firefox",
         "serverName": "",
         "mldsa65Verify": ""
       }

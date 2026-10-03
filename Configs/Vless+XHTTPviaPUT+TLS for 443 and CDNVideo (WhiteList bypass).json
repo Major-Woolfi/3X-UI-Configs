@@ -93,7 +93,7 @@
         "X25519MLKEM768"
       ],
       "settings": {
-        "fingerprint": "randomized",
+        "fingerprint": "firefox",
         "echConfigList": "",
         "pinnedPeerCertSha256": [ ],
         "verifyPeerCertByName": ""

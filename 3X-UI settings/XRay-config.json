@@ -15,7 +15,6 @@
       "tag": "direct",
       "protocol": "freedom",
       "settings": {
-        "domainStrategy": "AsIs",
         "finalRules": [
           {
             "action": "allow"
@@ -29,7 +28,12 @@
             "prioritizeIPv6": false,
             "interleave": 1,
             "maxConcurrentTry": 4
-          }
+          },
+          "addressPortStrategy": "",
+          "tcpFastOpen": true,
+          "tcpMptcp": true,
+          "penetrate": true,
+          "tproxy": "off"
         }
       }
     },
@@ -47,26 +51,36 @@
           "api"
         ],
         "outboundTag": "api"
-      },
-      {
-        "type": "field",
-        "protocol": [
-          "bittorrent"
-        ],
-        "outboundTag": "blocked"
-      },
-      {
-        "type": "field",
-        "domain": [
-          "geosite:category-ads-all",
-          "ext:geosite_IR.dat:category-ads-all",
-          "ext:geosite_RU.dat:category-ads-all",
-          "ext:geosite_IR.dat:malware"
-        ],
-        "outboundTag": "blocked"
       }
     ],
     "domainStrategy": "IPOnDemand"
+  },
+  "dns": {
+    "tag": "dns_inbound",
+    "hosts": { },
+    "servers": [
+      "8.8.8.8",
+      "8.8.4.4",
+      "1.1.1.1",
+      "1.0.0.1",
+      "https://cloudflare-dns.com/dns-query",
+      "https://dns.google/dns-query",
+      "https://dns.quad9.net/dns-query",
+      "https://dns.adguard-dns.com/dns-query",
+      "quic+local://dns.adguard-dns.com",
+      "https://freedns.controld.com/p2",
+      "quic+local://p2.freedns.controld.com",
+      "https://cfdns.phantom.syberia.network/dns-query",
+      "https://gdns.phantom.syberia.network/dns-query"
+    ],
+    "queryStrategy": "UseIP",
+    "disableCache": false,
+    "disableFallback": true,
+    "disableFallbackIfMatch": true,
+    "enableParallelQuery": true,
+    "useSystemHosts": true,
+    "serveStale": false,
+    "serveExpiredTTL": 0
   },
   "log": {
     "access": "none",
@@ -77,10 +91,10 @@
   },
   "policy": {
     "system": {
-      "statsInboundDownlink": true,
-      "statsInboundUplink": true,
-      "statsOutboundDownlink": true,
-      "statsOutboundUplink": true
+      "statsInboundDownlink": false,
+      "statsInboundUplink": false,
+      "statsOutboundDownlink": false,
+      "statsOutboundUplink": false
     },
     "levels": {
       "0": {
@@ -89,6 +103,12 @@
       }
     }
   },
+  "fakedns": [
+    {
+      "ipPool": "198.18.0.0/15",
+      "poolSize": 65535
+    }
+  ],
   "api": {
     "services": [
       "HandlerService",

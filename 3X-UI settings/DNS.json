@@ -1,8 +1,17 @@
 {
   "servers": [
+    "8.8.8.8",
+    "8.8.4.4",
+    "1.1.1.1",
+    "1.0.0.1",
     "https://cloudflare-dns.com/dns-query",
     "https://dns.google/dns-query",
-    "tls://8.8.8.8",
-    "tls://1.1.1.1"
+    "https://dns.quad9.net/dns-query",
+    "https://dns.adguard-dns.com/dns-query",
+    "quic+local://dns.adguard-dns.com",
+    "https://freedns.controld.com/p2",
+    "quic+local://p2.freedns.controld.com",
+    "https://cfdns.phantom.syberia.network/dns-query",
+    "https://gdns.phantom.syberia.network/dns-query"
   ]
 }
