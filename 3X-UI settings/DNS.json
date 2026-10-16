@@ -6,12 +6,12 @@
     "1.0.0.1",
     "https://cloudflare-dns.com/dns-query",
     "https://dns.google/dns-query",
+    "https://cfdns.phantom.syberia.network/dns-query",
+    "https://gdns.phantom.syberia.network/dns-query",
     "https://dns.quad9.net/dns-query",
     "https://dns.adguard-dns.com/dns-query",
     "quic+local://dns.adguard-dns.com",
     "https://freedns.controld.com/p2",
-    "quic+local://p2.freedns.controld.com",
-    "https://cfdns.phantom.syberia.network/dns-query",
-    "https://gdns.phantom.syberia.network/dns-query"
+    "quic+local://p2.freedns.controld.com"
   ]
 }

@@ -4,7 +4,6 @@
   "protocol": "vless",
   "tag": "in-8443-tcpudp",
   "settings": {
-    "clients": [ ],
     "decryption": "ML-KEM-768 (random)",
     "encryption": "ML-KEM-768 (random)"
   },
@@ -98,10 +97,21 @@
         "REGENERATE PLS"
       ],
       "mldsa65Seed": "",
+      "limitFallbackUpload": {
+        "afterBytes": 0,
+        "bytesPerSec": 0,
+        "burstBytesPerSec": 0
+      },
+      "limitFallbackDownload": {
+        "afterBytes": 0,
+        "bytesPerSec": 0,
+        "burstBytesPerSec": 0
+      },
       "settings": {
         "publicKey": "REGENERATE PLS",
-        "fingerprint": "firefox",
+        "fingerprint": "randomized",
         "serverName": "",
+        "spiderX": "",
         "mldsa65Verify": ""
       }
     },
@@ -119,11 +129,7 @@
         "maxStreamReceiveWindow": 8388608,
         "initConnectionReceiveWindow": 20971520,
         "maxConnectionReceiveWindow": 20971520,
-        "bbrProfile": "aggressive",
-        "udpHop": {
-          "ports": "20000-50000",
-          "interval": "5-10"
-        }
+        "bbrProfile": "aggressive"
       }
     },
     "sockopt": {

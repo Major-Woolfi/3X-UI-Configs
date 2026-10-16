@@ -4,7 +4,6 @@
   "protocol": "vless",
   "tag": "in-443-tcp",
   "settings": {
-    "clients": [ ],
     "decryption": "ML-KEM-768 (random)",
     "encryption": "ML-KEM-768 (random)"
   },
@@ -93,7 +92,7 @@
         "X25519MLKEM768"
       ],
       "settings": {
-        "fingerprint": "firefox",
+        "fingerprint": "randomized",
         "echConfigList": "",
         "pinnedPeerCertSha256": [ ],
         "verifyPeerCertByName": ""
@@ -113,11 +112,7 @@
         "maxStreamReceiveWindow": 8388608,
         "initConnectionReceiveWindow": 20971520,
         "maxConnectionReceiveWindow": 20971520,
-        "bbrProfile": "aggressive",
-        "udpHop": {
-          "ports": "20000-50000",
-          "interval": "5-10"
-        }
+        "bbrProfile": "aggressive"
       }
     },
     "sockopt": {
