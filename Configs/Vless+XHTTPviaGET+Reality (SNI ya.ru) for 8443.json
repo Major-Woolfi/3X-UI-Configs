@@ -1,13 +1,11 @@
 {
   "listen": "",
-  "port": 9443,
-  "protocol": "shadowsocks",
-  "tag": "in-9443-tcpudp",
+  "port": 8443,
+  "protocol": "vless",
+  "tag": "in-8443-tcpudp",
   "settings": {
-    "method": "chacha20-ietf-poly1305",
-    "password": "REGENERATE PLS",
-    "network": "tcp,udp",
-    "ivCheck": false
+    "decryption": "ML-KEM-768 (random)",
+    "encryption": "ML-KEM-768 (random)"
   },
   "sniffing": {
     "enabled": true,
@@ -22,7 +20,7 @@
     "network": "xhttp",
     "xhttpSettings": {
       "path": "",
-      "host": "yandex.net",
+      "host": "ya.ru",
       "mode": "packet-up",
       "xPaddingBytes": "100-1000",
       "xPaddingObfsMode": true,
@@ -62,34 +60,12 @@
     "realitySettings": {
       "show": false,
       "xver": 0,
-      "target": "yandex.net:443",
+      "target": "ya.ru:443",
       "serverNames": [
-        "xn--d1acpjx3f.xn--p1ai",
-        "yandex.aero",
-        "yandex.jobs",
-        "yandex.net",
-        "yandex.org",
-        "yandex.de",
-        "ya.ru",
-        "yandex.it",
-        "yandex.uz",
-        "yandex.tm",
-        "yandex.tj",
-        "yandex.ru",
-        "yandex.md",
-        "yandex.lv",
-        "yandex.lt",
-        "yandex.kz",
-        "yandex.fr",
-        "yandex.ee",
-        "yandex.com.tr",
-        "yandex.com.ge",
-        "yandex.com.am",
         "yandex.com",
-        "yandex.co.il",
-        "yandex.by",
-        "yandex.az",
-        "yandex.tr"
+        "xn--d1acpjx3f.xn--p1ai",
+        "ya.ru",
+        "yandex.by"
       ],
       "privateKey": "REGENERATE PLS",
       "minClientVer": "",
@@ -111,7 +87,7 @@
       },
       "settings": {
         "publicKey": "REGENERATE PLS",
-        "fingerprint": "randomized",
+        "fingerprint": "firefox",
         "serverName": "",
         "spiderX": "",
         "mldsa65Verify": ""
