@@ -3,14 +3,14 @@
   "GlobalProxy": true,
   "RemoteDNSType": "DoH",
   "RemoteDNSDomain": "https://cfdns.phantom.syberia.network/dns-query",
-  "RemoteDNSIP": "151.243.190.121",
+  "RemoteDNSIP": "191.101.206.36",
   "DomesticDNSType": "DoU",
   "DomesticDNSDomain": "https://dns.google/dns-query",
   "DomesticDNSIP": "8.8.8.8",
   "FakeDNS": true,
   "DnsHosts": {
-    "cfdns.phantom.syberia.network": "151.243.190.121",
-    "gdns.phantom.syberia.network": "151.243.190.121",
+    "cfdns.phantom.syberia.network": "191.101.206.36",
+    "gdns.phantom.syberia.network": "191.101.206.36",
     "cloudflare-dns.com": "1.1.1.1",
     "dns.google": "8.8.8.8"
   },

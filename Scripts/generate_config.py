@@ -20,7 +20,7 @@ ROOT_DIR = SCRIPT_DIR.parent
 CONFIGS_DIR = ROOT_DIR / "Configs"
 BUILD_DIR = ROOT_DIR / "Build"
 
-HEX_PLACEHOLDER_RE = re.compile(r"^\s*(\d+)\s*HEX", re.IGNORECASE)
+HEX_PLACEHOLDER_RE = re.compile(r"(\d+)\s*HEX", re.IGNORECASE)
 DOMAIN_PLACEHOLDERS = ("YOURDOMAIN.CLIENT.INHERE", "YOURDOMAIN.SERVER.INHERE")
 
 # 3x-ui хранит эти протоколы в структурах, которые генератор соберёт только
@@ -200,11 +200,11 @@ def gen_ss_password(method: str) -> str:
 
 
 def gen_hex_from_placeholder(value: str) -> str | None:
-    match = HEX_PLACEHOLDER_RE.match(value.strip())
+    match = HEX_PLACEHOLDER_RE.search(value.strip())
     if not match:
         return None
     n_hex = int(match.group(1))
-    return secrets.token_hex(max(1, n_hex // 2))
+    return secrets.token_hex((n_hex + 1) // 2)[:n_hex]
 
 
 # --- Схема панели 3x-ui v3.7.0 / XRay-core v26.9.9: типы полей ---
@@ -509,7 +509,7 @@ def is_placeholder(value: str) -> bool:
     stripped = value.strip()
     if not stripped or stripped == "REGENERATE PLS" or "(random)" in stripped:
         return True
-    if HEX_PLACEHOLDER_RE.match(stripped):
+    if HEX_PLACEHOLDER_RE.search(stripped):
         return True
     return any(mark in stripped for mark in DOMAIN_PLACEHOLDERS)
 
@@ -554,10 +554,12 @@ def fill_config(
             return generated.get("vless_encryption", value)
         if key in ("privateKey", "publicKey") and value == "REGENERATE PLS":
             return generated.get(f"reality_{key}", value)
-        generated_hex = gen_hex_from_placeholder(value)
-        if generated_hex is not None:
-            generated.setdefault(f"{key or 'value'}_hex", generated_hex)
-            return generated_hex
+        new_value, n_repl = HEX_PLACEHOLDER_RE.subn(
+            lambda m: secrets.token_hex((int(m.group(1)) + 1) // 2)[: int(m.group(1))],
+            value,
+        )
+        if n_repl:
+            return new_value
         if value == "REGENERATE PLS":
             password = gen_password()
             generated.setdefault(f"{key or 'value'}_password", password)
